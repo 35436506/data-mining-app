@@ -143,6 +143,42 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
   margin: 1.2rem 0;
 }
 
+/* ── Vietnamese Tooltips ─────────────────────────────────────── */
+[data-vi] {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dashed #58a6ff44;
+}
+[data-vi]:hover::after {
+  content: attr(data-vi);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1c2230;
+  border: 1px solid #58a6ff;
+  border-radius: 7px;
+  padding: .45rem .75rem;
+  font-size: .8rem;
+  color: #e6edf3;
+  white-space: nowrap;
+  max-width: 320px;
+  white-space: normal;
+  z-index: 9999;
+  line-height: 1.5;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  pointer-events: none;
+  font-family: 'Space Grotesk', sans-serif;
+}
+[data-vi]:hover::before {
+  content: "🇻🇳 ";
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(calc(-50% - 4px));
+  z-index: 10000;
+}
+
 /* ── Streamlit overrides ─────────────────────────────────────── */
 .stSelectbox>div>div, .stMultiSelect>div>div,
 .stTextInput>div>div, .stTextArea>div>textarea {
@@ -199,6 +235,7 @@ st.markdown("""
   <div class="logo">◈</div>
   <div>
     <h1>Data Mining Studio</h1>
+    <p><span data-vi="Di chuột vào các từ có gạch chân để xem tiếng Việt">Hover over underlined terms to see Vietnamese translations 🇻🇳</span></p>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -209,6 +246,49 @@ st.markdown("""
 # ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ◈ Navigation")
+
+    # ── User Guide ────────────────────────────────────────────────
+    with st.expander("📘 User Guide — How to use this app", expanded=False):
+        st.markdown("""
+**Welcome to Data Mining Studio!** 👋
+
+This app helps you analyse your data and discover patterns — no coding needed.
+
+---
+
+**How it works — 4 simple steps:**
+
+**① Upload your data**
+- Prepare a spreadsheet file (`.csv` or `.xlsx`)
+- Each row should be one record (e.g. one customer, one transaction)
+- Each column should be one piece of information (e.g. Age, City, Purchased)
+- Upload the file and the app will read it automatically
+
+**② Understand your data**
+- The app will scan every column and show you what it found
+- You then describe what the data is about and what you want to learn
+- Tell the app which column you want to predict (the "target")
+
+**③ Configure & Launch**
+- Review the settings the app has chosen for you
+- Adjust if needed (e.g. which models to run, how to handle missing values)
+- Click **Run Analysis** to start
+
+**④ Explore Results**
+- Compare all models side by side in the **Model Comparison** table
+- Dig into charts: Confusion Matrix, ROC curve, Feature Importance
+- Adjust the cutoff threshold to see how it affects predictions
+- Read the **Methodology** tab to understand how each model works
+
+---
+
+💡 **Tips for best results:**
+- Make sure your target column has clear labels (e.g. Yes/No, 0/1)
+- More rows = better predictions (aim for 100+ rows)
+- Remove columns that are just ID numbers or dates
+        """)
+
+    st.markdown("---")
     stages = ["upload","profile","confirm","run","results"]
     stage_labels = {"upload":"① Upload","profile":"② Understand","confirm":"③ Configure","run":"⏳ Running","results":"④ Results"}
     current_idx = stages.index(S["stage"]) if S["stage"] in stages else 0
@@ -221,43 +301,6 @@ with st.sidebar:
         unsafe_allow_html=True)
 
     st.markdown("---")
-    with st.expander("📖 Methodology", expanded=False):
-        st.markdown("""
-**Classification** — predict a discrete label  
-LDA · Logistic Regression · KNN · Decision Tree  
-Naïve Bayes · Neural Network (MLP) · SVM
-
-**Regression** — predict a continuous value  
-Linear · Ridge · Lasso · Tree · MLP
-
-**Clustering** — find natural groups  
-K-Means · Hierarchical (Ward)
-
-**Association Rules** — discover co-occurrence  
-Apriori: Support · Confidence · Lift
-
-**Key metrics**  
-`Sensitivity = TP/(TP+FN)` — recall for positive class  
-`Specificity = TN/(TN+FP)` — recall for negative class  
-`Cutoff` — probability threshold; lower → higher sensitivity  
-`Lift > 1` — rule is better than random chance  
-`R²` — variance explained (regression)
-
-**Data integrity**  
-Target encoding is fit on training rows only.  
-Decision Tree default depth = 6 (prevents memorisation).  
-If val accuracy is ≥99%, read the ⚠️ warning in results.
-        """)
-    with st.expander("🔤 Encoding guide", expanded=False):
-        st.markdown("""
-**Label Encoding** — ordinal categories (Low<Med<High)  
-**One-Hot Encoding** — nominal categories (no order)  
-**Target Encoding** — mean of target per category  
-**Binary Encoding** — many categories, compact  
-**Ordinal Encoding** — custom rank order  
-
-App detects encoding needs automatically and lets you override per column.
-        """)
 
     if S["stage"] not in ("upload","profile"):
         st.markdown("---")
@@ -839,7 +882,8 @@ def scatter_avp(y_true, y_pred, title="Actual vs Predicted"):
 if S["stage"] == "upload":
     st.markdown("""
     <div class="step-header">
-      <div class="step-num">1</div> Upload your data
+      <div class="step-num">1</div>
+      <span data-vi="Tải lên dữ liệu của bạn (file CSV hoặc Excel)">Upload your data</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -856,13 +900,13 @@ if S["stage"] == "upload":
         <div class="card card-accent">
         <div class="tag tag-blue">CSV</div>
         <div class="tag tag-blue">XLSX</div>
-        <div class="tag tag-green">Multi-sheet</div>
-        <div class="tag tag-green">Mixed types</div>
-        <div class="tag tag-purple">Text + Numeric</div>
+        <div class="tag tag-green" data-vi="Hỗ trợ nhiều trang tính trong một file Excel">Multi-sheet</div>
+        <div class="tag tag-green" data-vi="Xử lý tự động các loại dữ liệu hỗn hợp">Mixed types</div>
+        <div class="tag tag-purple" data-vi="Hỗ trợ cả cột văn bản và cột số">Text + Numeric</div>
         <br><br>
         <span style="color:#8b949e;font-size:.83rem">
-        All column types handled automatically:<br>
-        numeric · categorical · binary · text-encoded · datetime
+        <span data-vi="Tất cả các loại cột được xử lý tự động: số, phân loại, nhị phân, mã hóa văn bản, ngày giờ">All column types handled automatically:<br>
+        numeric · categorical · binary · text-encoded · datetime</span>
         </span>
         </div>
         """, unsafe_allow_html=True)
@@ -908,7 +952,8 @@ if S["stage"] == "upload":
 if S["stage"] == "profile":
     st.markdown("""
     <div class="step-header">
-      <div class="step-num">2</div> Understand your data & goals
+      <div class="step-num">2</div>
+      <span data-vi="Hiểu dữ liệu và mục tiêu phân tích của bạn">Understand your data &amp; goals</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -955,25 +1000,39 @@ if S["stage"] == "profile":
     # ── Goal intake ───────────────────────────────────────────────
     st.markdown("""
     <div class="bubble-sys">
-    <b>◈ Studio:</b> Before running any model, tell us what you're trying to achieve.
-    This helps select the right technique, encoding, and evaluation metrics.
+    <b>◈ Studio:</b> <span data-vi="Trước khi chạy mô hình, hãy cho chúng tôi biết bạn muốn đạt được điều gì. Điều này giúp chọn đúng kỹ thuật và chỉ số đánh giá.">Before running any model, tell us what you're trying to achieve.
+    This helps select the right technique, encoding, and evaluation metrics.</span>
     </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <style>
+    .ctx-label {
+        color: #ffffff !important;
+        font-size: 1.05rem !important;
+        font-weight: 600 !important;
+        margin-bottom: 0.3rem;
+        display: block;
+    }
+    </style>
     """, unsafe_allow_html=True)
 
     context = {}
 
     c1, c2 = st.columns(2)
     with c1:
+        st.markdown('<span class="ctx-label" data-vi="Dữ liệu của bạn chứa thông tin gì? (ví dụ: thông tin khách hàng, kết quả khảo sát...)">📋 What does your data contain?</span>', unsafe_allow_html=True)
         context["description"] = st.text_area(
-            "What does this data represent?",
-            placeholder="e.g., Audit responses (Yes/No) from two firms for detecting management fraud. Each row is one company.",
-            height=110, key="ctx_desc"
+            "What does your data contain?",
+            placeholder="e.g., Survey results (Yes/No answers) from 500 customers about their shopping habits. Each row is one customer.",
+            height=110, key="ctx_desc", label_visibility="collapsed"
         )
     with c2:
+        st.markdown('<span class="ctx-label" data-vi="Bạn muốn khám phá hoặc dự đoán điều gì từ dữ liệu này?">🎯 What do you want to find out?</span>', unsafe_allow_html=True)
         context["goal"] = st.text_area(
-            "What do you want to achieve?",
-            placeholder="e.g., Compare which questionnaire detects fraud better, combine them into a composite score, and find the optimal classification threshold.",
-            height=110, key="ctx_goal"
+            "What do you want to find out?",
+            placeholder="e.g., Predict which customers are likely to buy again, and find out which factors matter most for that prediction.",
+            height=110, key="ctx_goal", label_visibility="collapsed"
         )
 
     context["extra"] = st.text_input(
@@ -1076,7 +1135,8 @@ if S["stage"] == "confirm":
 
     st.markdown("""
     <div class="step-header">
-      <div class="step-num">3</div> Configure & Launch
+      <div class="step-num">3</div>
+      <span data-vi="Xem lại cài đặt và khởi chạy phân tích">Configure &amp; Launch</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1643,7 +1703,8 @@ if S["stage"] == "results":
                 .format({"Train Acc":"{:.1%}","Val Accuracy":"{:.1%}","Sensitivity":"{:.1%}",
                           "Specificity":"{:.1%}","F1":"{:.3f}","Precision":"{:.1%}"})
                 .background_gradient(subset=["Val Accuracy","Sensitivity"], cmap="Blues"),
-                use_container_width=True
+                use_container_width=True,
+                hide_index=True
             )
 
             # Interactive: select model and show detail
@@ -1684,19 +1745,19 @@ if S["stage"] == "results":
             with c2:
                 st.markdown(f"""
                 <div class="card card-accent">
-                <div class="tag tag-blue">Sensitivity</div><br>
+                <div class="tag tag-blue" data-vi="Độ nhạy: tỷ lệ phát hiện đúng các trường hợp dương tính">Sensitivity</div><br>
                 <b style="font-size:1.5rem">{res_cm.get('sensitivity',0):.1%}</b>
-                <p style="color:#8b949e;font-size:.82rem">TP/(TP+FN) — share of actual positives correctly identified</p>
+                <p style="color:#8b949e;font-size:.82rem"><span data-vi="TP/(TP+FN): tỷ lệ trường hợp dương tính thực tế được nhận dạng đúng">TP/(TP+FN) — share of actual positives correctly identified</span></p>
                 </div>
                 <div class="card card-green" style="margin-top:.5rem">
-                <div class="tag tag-green">Specificity</div><br>
+                <div class="tag tag-green" data-vi="Độ đặc hiệu: tỷ lệ nhận dạng đúng các trường hợp âm tính">Specificity</div><br>
                 <b style="font-size:1.5rem">{res_cm.get('specificity',0):.1%}</b>
-                <p style="color:#8b949e;font-size:.82rem">TN/(TN+FP) — share of actual negatives correctly identified</p>
+                <p style="color:#8b949e;font-size:.82rem"><span data-vi="TN/(TN+FP): tỷ lệ trường hợp âm tính thực tế được nhận dạng đúng">TN/(TN+FP) — share of actual negatives correctly identified</span></p>
                 </div>
                 <div class="card card-yellow" style="margin-top:.5rem">
-                <div class="tag tag-yellow">F1 Score</div><br>
+                <div class="tag tag-yellow" data-vi="Điểm F1: trung bình điều hòa giữa Độ chính xác và Độ nhớ lại">F1 Score</div><br>
                 <b style="font-size:1.5rem">{res_cm['f1']:.3f}</b>
-                <p style="color:#8b949e;font-size:.82rem">Harmonic mean of Precision and Recall</p>
+                <p style="color:#8b949e;font-size:.82rem"><span data-vi="Trung bình điều hòa của Precision (độ chính xác) và Recall (độ nhớ lại)">Harmonic mean of Precision and Recall</span></p>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1705,8 +1766,8 @@ if S["stage"] == "results":
             tab_idx += 1
             # Interactive cutoff slider
             st.markdown("""<div class="card card-yellow" style="font-size:.84rem">
-            Change the cutoff to explore the Sensitivity / Specificity trade-off in real time.
-            Lower cutoff → higher Sensitivity (catch more positives) but more False Positives.
+            <span data-vi="Thay đổi ngưỡng phân loại để xem sự đánh đổi giữa Độ nhạy và Độ đặc hiệu theo thời gian thực. Ngưỡng thấp hơn → Độ nhạy cao hơn (bắt nhiều trường hợp dương hơn) nhưng sẽ có nhiều cảnh báo sai hơn.">Change the cutoff to explore the Sensitivity / Specificity trade-off in real time.
+            Lower cutoff → higher Sensitivity (catch more positives) but more False Positives.</span>
             </div>""", unsafe_allow_html=True)
 
             live_cutoff = st.slider("Live cutoff", 0.05, 0.95,
