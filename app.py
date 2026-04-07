@@ -41,8 +41,8 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
   --c-bg:      #0d1117;
   --c-surface: #161b22;
   --c-border:  #30363d;
-  --c-text:    #e6edf3;
-  --c-muted:   #8b949e;
+  --c-text:    #f0f6fc;
+  --c-muted:   #b1bac4;
   --c-accent:  #58a6ff;
   --c-green:   #3fb950;
   --c-yellow:  #d29922;
@@ -51,7 +51,8 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
 }
 
 /* ── Global ─────────────────────────────────────────────────── */
-.stApp { background: #0d1117; color: #e6edf3; }
+.stApp { background: #0d1117; color: #f0f6fc; }
+.stApp p, .stApp li, .stApp span, .stApp div { font-size: .95rem !important; }
 .block-container { padding-top: 1.5rem !important; max-width: 1400px; }
 
 /* ── Header ─────────────────────────────────────────────────── */
@@ -83,10 +84,10 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
   transition: border-color .2s;
 }
 .metric-tile:hover { border-color: #58a6ff; }
-.metric-tile .m-label { font-size: .68rem; color: #8b949e; font-weight: 600;
+.metric-tile .m-label { font-size: .78rem; color: #b1bac4; font-weight: 600;
   text-transform: uppercase; letter-spacing: .7px; }
-.metric-tile .m-value { font-size: 1.7rem; font-weight: 700; color: #e6edf3; line-height: 1.1; }
-.metric-tile .m-sub   { font-size: .73rem; color: #6e7681; margin-top: .2rem; }
+.metric-tile .m-value { font-size: 1.8rem; font-weight: 700; color: #f0f6fc; line-height: 1.1; }
+.metric-tile .m-sub   { font-size: .82rem; color: #8b949e; margin-top: .2rem; }
 .metric-tile .m-badge {
   display: inline-block; padding: .15rem .55rem; border-radius: 20px;
   font-size: .72rem; font-weight: 600; margin-top: .3rem;
@@ -130,7 +131,7 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
 .bubble-sys {
   background: #161b22; border: 1px solid #30363d;
   border-radius: 10px; padding: .9rem 1.1rem; margin: .5rem 0;
-  font-size: .88rem; color: #8b949e; line-height: 1.6;
+  font-size: .93rem; color: #b1bac4; line-height: 1.6;
 }
 .bubble-sys b { color: #58a6ff; }
 .bubble-sys code { background: #0d1117; padding: .1rem .3rem; border-radius: 4px;
@@ -159,8 +160,8 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
 .stButton>button[kind="primary"]:hover { background: #388bfd !important; }
 .stTabs [data-baseweb="tab-list"] { background: #161b22; border-bottom: 1px solid #30363d; gap: 0; }
 .stTabs [data-baseweb="tab"] {
-  background: transparent; color: #8b949e; border-radius: 0;
-  padding: .6rem 1.1rem; font-weight: 500; font-size: .86rem;
+  background: transparent; color: #b1bac4; border-radius: 0;
+  padding: .6rem 1.1rem; font-weight: 500; font-size: .92rem;
 }
 .stTabs [aria-selected="true"] { color: #58a6ff !important; border-bottom: 2px solid #58a6ff !important; }
 .stDataFrame { background: #161b22 !important; }
@@ -198,7 +199,6 @@ st.markdown("""
   <div class="logo">◈</div>
   <div>
     <h1>Data Mining Studio</h1>
-    <p>Professional analytics · Classification · Regression · Clustering · Association · Neural Networks</p>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -217,7 +217,7 @@ with st.sidebar:
         done   = i < current_idx
         color  = "#58a6ff" if active else ("#3fb950" if done else "#30363d")
         st.markdown(f"""<div style="padding:.35rem .5rem;border-left:2px solid {color};
-        margin:.15rem 0;font-size:.83rem;color:{'#e6edf3' if active else '#8b949e'}">{lb}</div>""",
+        margin:.15rem 0;font-size:.88rem;color:{'#f0f6fc' if active else '#b1bac4'}">{lb}</div>""",
         unsafe_allow_html=True)
 
     st.markdown("---")
@@ -242,6 +242,11 @@ Apriori: Support · Confidence · Lift
 `Cutoff` — probability threshold; lower → higher sensitivity  
 `Lift > 1` — rule is better than random chance  
 `R²` — variance explained (regression)
+
+**Data integrity**  
+Target encoding is fit on training rows only.  
+Decision Tree default depth = 6 (prevents memorisation).  
+If val accuracy is ≥99%, read the ⚠️ warning in results.
         """)
     with st.expander("🔤 Encoding guide", expanded=False):
         st.markdown("""
@@ -369,9 +374,12 @@ def smart_preprocess(df: pd.DataFrame, profile: dict,
                      enc_overrides: dict,     # {col: enc_method}
                      impute_strategy: str,
                      drop_cols: list,
-                     task: str) -> tuple:
+                     task: str,
+                     train_idx=None) -> tuple:
     """
     Full preprocessing pipeline.
+    train_idx: optional array of training row indices — used to fit target encoding
+               on training rows only, preventing data leakage.
     Returns (X_df, y_series, feature_names, enc_log, label_maps)
     """
     enc_log    = []
@@ -444,12 +452,15 @@ def smart_preprocess(df: pd.DataFrame, profile: dict,
                 enc_log.append(f"🔠 `{col}` → One-Hot ({dummies.shape[1]} new cols): {list(dummies.columns[:3])}…")
 
             elif enc == "target" and target_col:
-                # Target encoding (using full dataset — acceptable for display purposes)
-                enc_map = y_raw.groupby(df2[col]).mean().to_dict()
+                # Target encoding — fit only on training rows to avoid leakage
+                if train_idx is not None:
+                    enc_map = y_raw.iloc[train_idx].groupby(df2[col].iloc[train_idx]).mean().to_dict()
+                else:
+                    enc_map = y_raw.groupby(df2[col]).mean().to_dict()
                 df2[col + "_tenc"] = df2[col].map(enc_map).fillna(y_raw.mean())
                 to_drop.append(col)
                 label_maps[col] = enc_map
-                enc_log.append(f"🎯 `{col}` → Target Encoding (mean of target per category)")
+                enc_log.append(f"🎯 `{col}` → Target Encoding (fit on train only — leakage-free)")
 
             elif enc == "ordinal":
                 from sklearn.preprocessing import OrdinalEncoder
@@ -584,7 +595,7 @@ def build_clf(name: str, params: dict, seed: int):
             n_neighbors=params.get("k", 5),
             weights=params.get("weights", "uniform")),
         "Decision Tree": lambda: DecisionTreeClassifier(
-            max_depth=params.get("max_depth", None),
+            max_depth=params.get("max_depth", 6),
             min_samples_leaf=params.get("min_samples_leaf", 4),
             criterion=params.get("criterion", "gini"),
             random_state=seed),
@@ -620,7 +631,7 @@ def build_reg(name: str, params: dict, seed: int):
         "Ridge": lambda: Ridge(alpha=params.get("ridge_alpha", 1.0)),
         "Lasso": lambda: Lasso(alpha=params.get("lasso_alpha", 0.1), max_iter=2000),
         "Decision Tree": lambda: DecisionTreeRegressor(
-            max_depth=params.get("max_depth", None),
+            max_depth=params.get("max_depth", 6),
             min_samples_leaf=params.get("min_samples_leaf", 4),
             random_state=seed),
         "Neural Network": lambda: MLPRegressor(
@@ -739,11 +750,14 @@ def feature_importances(result: dict, feat_names: list):
 
 DARK = dict(
     paper_bgcolor="#161b22", plot_bgcolor="#161b22",
-    font=dict(family="Space Grotesk", color="#e6edf3", size=11),
-    title_font=dict(size=13, color="#e6edf3"),
-    legend=dict(bgcolor="#0d1117", bordercolor="#30363d", borderwidth=1),
-    xaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", color="#8b949e"),
-    yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", color="#8b949e"),
+    font=dict(family="Space Grotesk", color="#f0f6fc", size=12),
+    title_font=dict(size=14, color="#f0f6fc"),
+    legend=dict(bgcolor="#0d1117", bordercolor="#30363d", borderwidth=1,
+                font=dict(color="#f0f6fc")),
+    xaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", color="#b1bac4",
+               tickfont=dict(color="#b1bac4", size=11)),
+    yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", color="#b1bac4",
+               tickfont=dict(color="#b1bac4", size=11)),
 )
 
 
@@ -1198,7 +1212,7 @@ if S["stage"] == "confirm":
             params["max_iter_nn"]  = st.slider("Max epochs", 100, 2000, 500, 100)
         with mcols[2]:
             st.markdown("**Decision Tree / RF**")
-            params["max_depth"]       = st.slider("Max depth (0=unlimited)", 0, 20, 0)
+            params["max_depth"]       = st.slider("Max depth (0=unlimited)", 0, 20, 6)
             if params["max_depth"] == 0: params["max_depth"] = None
             params["min_samples_leaf"]= st.slider("Min samples / leaf", 1, 30, 4)
             params["n_estimators"]    = st.slider("RF: n trees", 50, 500, 100, 50)
@@ -1297,6 +1311,20 @@ if S["stage"] == "run":
 
     R = {}  # results dict
 
+    # ── Pre-split indices for leakage-free target encoding ────────
+    _df_tmp = cfg["work_df"]
+    _tgt_tmp = cfg["target"] if cfg["target"] else list(_df_tmp.columns)[-1]
+    _y_tmp = _df_tmp[_tgt_tmp]
+    try:
+        _train_idx, _val_idx = train_test_split(
+            np.arange(len(_df_tmp)), test_size=cfg["test_size"],
+            random_state=cfg["seed"],
+            stratify=_y_tmp if cfg["task"]=="Classification" and _y_tmp.nunique()<=20 else None
+        )
+    except Exception:
+        _train_idx, _val_idx = train_test_split(
+            np.arange(len(_df_tmp)), test_size=cfg["test_size"], random_state=cfg["seed"])
+
     # ── Preprocess ────────────────────────────────────────────────
     log("🔧 Preprocessing data…")
     prog.progress(5)
@@ -1305,7 +1333,8 @@ if S["stage"] == "run":
         cfg["work_df"], cfg["work_prof"],
         cfg["target"] if cfg["target"] else list(cfg["work_df"].columns)[-1],
         cfg["enc_overrides"], cfg["impute"],
-        cfg["drop_cols"], cfg["task"]
+        cfg["drop_cols"], cfg["task"],
+        train_idx=_train_idx
     )
 
     R["enc_log"]    = enc_log
@@ -1551,7 +1580,7 @@ if S["stage"] == "results":
     if reg_res: tab_names += ["📈 Regression Results","🔑 Feature Importance"]
     if R.get("cluster_labels") is not None: tab_names.append("🔵 Clustering")
     if R.get("assoc_rules") is not None:    tab_names.append("🔗 Association Rules")
-    tab_names += ["🧬 Data Profile","⚙️ Pipeline Log"]
+    tab_names += ["🧬 Data Profile","⚙️ Pipeline Log","🗺️ Methodology"]
 
     tabs = st.tabs(tab_names)
     tab_idx = 0
@@ -1588,6 +1617,26 @@ if S["stage"] == "results":
             df_cmp["Overfit Gap"] = df_cmp["Train Acc"] - df_cmp["Val Accuracy"]
             df_cmp["Overfit?"]    = df_cmp["Overfit Gap"].apply(
                 lambda x: "⚠️ High" if x > 0.12 else ("✓ Moderate" if x > 0.05 else "✅ Low"))
+
+            # Banner warning for suspicious perfect/near-perfect scores
+            suspicious = df_cmp[df_cmp["Val Accuracy"] >= 0.99]
+            if len(suspicious) > 0:
+                models_list = ", ".join(suspicious["Model"].tolist())
+                st.markdown(f"""<div class="card card-yellow" style="font-size:.88rem;margin:.6rem 0">
+                ⚠️ <b>Suspicious accuracy alert:</b> {models_list} scored ≥99% on validation.
+                This often indicates the dataset is very simple/small, the target leaks from a feature,
+                or the same data was used for training and validation.
+                Check the <b>Overfit?</b> column — a low gap alongside 100% usually means the task is trivially easy,
+                not that the model is truly powerful. Consider using a held-out test set.
+                </div>""", unsafe_allow_html=True)
+
+            high_overfit = df_cmp[df_cmp["Overfit Gap"] > 0.12]
+            if len(high_overfit) > 0:
+                models_list2 = ", ".join(high_overfit["Model"].tolist())
+                st.markdown(f"""<div class="card card-red" style="font-size:.88rem;margin:.4rem 0">
+                🔴 <b>Overfitting detected:</b> {models_list2} show a Train vs Val gap &gt;12%.
+                Consider limiting tree depth, increasing regularisation, or adding more training data.
+                </div>""", unsafe_allow_html=True)
 
             st.dataframe(
                 df_cmp[["Model","Train Acc","Val Accuracy","Sensitivity","Specificity","F1","Precision","Overfit?"]].style
@@ -1869,6 +1918,273 @@ if S["stage"] == "results":
         st.markdown("**Label maps**")
         for k, v in R.get("label_maps", {}).items():
             st.markdown(f"`{k}`: {v}")
+
+    # ── Tab: Methodology Flowcharts ───────────────────────────────
+    with tabs[tab_idx]:
+        tab_idx += 1
+        st.markdown("""<div class="card card-accent" style="margin-bottom:1rem;font-size:.93rem">
+        Each flowchart below illustrates how a method works — from raw data to final output.
+        These are general explanations independent of the current dataset.
+        </div>""", unsafe_allow_html=True)
+
+        meth_tabs = st.tabs(["📐 Decision Tree","📊 Logistic Regression","🧠 Neural Network",
+                              "📏 LDA","🌀 K-Means","🔗 Association Rules",
+                              "🌲 Random Forest","🎯 Naïve Bayes"])
+
+        # ── Decision Tree ────────────────────────────────────────
+        with meth_tabs[0]:
+            st.markdown("""### Decision Tree — How it works""")
+            st.markdown("""
+A Decision Tree learns a hierarchy of **if/else rules** on features to split data into pure groups.
+
+**Key concepts:**
+- **Gini impurity / Entropy** — measures how mixed a node's classes are; the algorithm picks the split that reduces this most
+- **Max depth** — limits how many splits deep the tree can go (prevents overfitting — default here is **6**)
+- **Min samples per leaf** — a node must have at least this many samples to be a leaf (prevents over-specific rules)
+- **No feature scaling needed** — trees are invariant to monotonic transformations
+            """)
+            st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Cart_tree_kyphosis.png/440px-Cart_tree_kyphosis.png",
+                     caption="Example decision tree structure", width=420)
+            st.markdown("""
+```
+Raw Data
+   │
+   ▼
+[Pick best feature & threshold]  ← minimises Gini / Entropy
+   │
+   ├─ Feature ≤ threshold ──► Left subtree (recurse)
+   │
+   └─ Feature > threshold ──► Right subtree (recurse)
+                                    │
+                              [Leaf node: majority class]
+```
+**Overfitting risk:** Without depth limits, a tree can memorise every training row (100% train acc, poor val acc).
+This app caps `max_depth=6` by default. Increase with caution.
+            """)
+
+        # ── Logistic Regression ──────────────────────────────────
+        with meth_tabs[1]:
+            st.markdown("""### Logistic Regression — How it works""")
+            st.markdown("""
+Logistic Regression fits a **linear decision boundary** and outputs a **probability** via the sigmoid function.
+
+**Key concepts:**
+- **Log-odds / Logit** — the model predicts `log(p/(1-p)) = w₀ + w₁x₁ + … + wₙxₙ`
+- **Sigmoid** — converts log-odds to a probability between 0 and 1
+- **Cutoff** — you choose the threshold above which a probability is labelled "positive"
+- **Regularisation (C)** — smaller C = stronger penalty on large weights = simpler model
+
+**Flowchart:**
+```
+Features (scaled)
+   │
+   ▼
+Linear combination:  z = w·x + b
+   │
+   ▼
+Sigmoid:  P(y=1) = 1 / (1 + e^{-z})
+   │
+   ▼
+P(y=1) ≥ cutoff ?  ──► Positive class
+                   No ──► Negative class
+```
+**Assumes:** Linear separability; requires feature scaling (done automatically).
+            """)
+
+        # ── Neural Network ───────────────────────────────────────
+        with meth_tabs[2]:
+            st.markdown("""### Neural Network (MLP) — How it works""")
+            st.markdown("""
+A Multilayer Perceptron (MLP) learns **non-linear** patterns by stacking layers of weighted sums and activations.
+
+**Key concepts:**
+- **Hidden layers** — intermediate transformations; default here is `[64, 32]` neurons
+- **Activation (ReLU)** — `max(0, x)` introduces non-linearity so the network can model complex boundaries
+- **Backpropagation** — error is propagated backwards to update weights via gradient descent
+- **Alpha (L2 regularisation)** — penalises large weights to prevent overfitting
+
+**Flowchart:**
+```
+Input features (scaled)
+   │
+   ▼
+Hidden Layer 1 (64 neurons) → ReLU activation
+   │
+   ▼
+Hidden Layer 2 (32 neurons) → ReLU activation
+   │
+   ▼
+Output layer → Softmax (multiclass) / Sigmoid (binary)
+   │
+   ▼
+Predicted class / probability
+```
+**Watch out for:** Needs many iterations (epochs) to converge; sensitive to feature scale.
+            """)
+
+        # ── LDA ──────────────────────────────────────────────────
+        with meth_tabs[3]:
+            st.markdown("""### Linear Discriminant Analysis (LDA) — How it works""")
+            st.markdown("""
+LDA finds a **linear projection** of features that maximises the separation between classes while minimising spread within classes.
+
+**Key concepts:**
+- **Between-class scatter** — how far apart are the class means?
+- **Within-class scatter** — how spread out is each class?
+- LDA maximises the ratio: Between-class / Within-class
+- Also works as **dimensionality reduction** — projects to at most `n_classes - 1` dimensions
+
+**Flowchart:**
+```
+Compute class means (μ₁, μ₂, …)
+   │
+   ▼
+Compute within-class scatter matrix Sw
+   │
+   ▼
+Compute between-class scatter matrix Sb
+   │
+   ▼
+Find projection W = argmax |Sb| / |Sw|
+   │
+   ▼
+Project data: z = W^T · x
+   │
+   ▼
+Assign to nearest class centroid in projected space
+```
+**Assumes:** Normally distributed features; equal covariance per class. Fast and interpretable.
+            """)
+
+        # ── K-Means ──────────────────────────────────────────────
+        with meth_tabs[4]:
+            st.markdown("""### K-Means Clustering — How it works""")
+            st.markdown("""
+K-Means partitions data into **K groups** by iteratively assigning points to the nearest centroid and updating centroids.
+
+**Key concepts:**
+- **Centroid** — the mean position of all points in a cluster
+- **Inertia** — total within-cluster sum of squared distances (lower = tighter clusters)
+- **Elbow method** — plot inertia vs K; pick the K where improvement flattens
+- **K is set by you** — unlike classification, there is no "correct" K; domain knowledge helps
+
+**Flowchart:**
+```
+Choose K
+   │
+   ▼
+Initialise K centroids (K-Means++ method)
+   │
+   ▼
+┌──────────────────────────────────────┐
+│  Assign each point to nearest        │
+│  centroid (Euclidean distance)       │
+│        │                             │
+│  Update centroid = mean of cluster   │
+│        │                             │
+│  Converged? ──No──► repeat           │
+└──────────────────────────────────────┘
+   │ Yes
+   ▼
+Final cluster assignments + centres
+```
+**Requires feature scaling** (done automatically). Sensitive to outliers.
+            """)
+
+        # ── Association Rules ────────────────────────────────────
+        with meth_tabs[5]:
+            st.markdown("""### Association Rules (Apriori) — How it works""")
+            st.markdown("""
+Association rule mining finds **if → then patterns** in transactional data (e.g. "customers who buy X also buy Y").
+
+**Key metrics:**
+| Metric | Formula | Meaning |
+|---|---|---|
+| **Support** | freq(X∪Y) / N | How often does {X,Y} appear together? |
+| **Confidence** | freq(X∪Y) / freq(X) | Given X, how often does Y appear? |
+| **Lift** | Confidence / P(Y) | Is the rule better than random? Lift > 1 = yes |
+
+**Flowchart:**
+```
+Transaction data (binary columns)
+   │
+   ▼
+Find frequent itemsets with Support ≥ min_support
+(Apriori: prune any superset of an infrequent set)
+   │
+   ▼
+Generate candidate rules from frequent itemsets
+   │
+   ▼
+Filter rules with Confidence ≥ min_confidence
+   │
+   ▼
+Rank by Lift → display top rules
+```
+**Lift > 1** means the items co-occur more than by chance — actionable patterns.
+            """)
+
+        # ── Random Forest ────────────────────────────────────────
+        with meth_tabs[6]:
+            st.markdown("""### Random Forest — How it works""")
+            st.markdown("""
+Random Forest is an **ensemble** of many Decision Trees, each trained on a random subset of data and features.
+The final prediction is a **majority vote** (classification) or **mean** (regression).
+
+**Key concepts:**
+- **Bagging (Bootstrap Aggregating)** — each tree sees a random sample with replacement
+- **Feature randomness** — at each split, only a random subset of features is considered
+- **Variance reduction** — averaging many weak learners cancels out individual errors
+- **Feature importance** — average impurity decrease across all trees per feature
+
+**Flowchart:**
+```
+For each of N trees:
+  ├─ Sample rows with replacement (bootstrap)
+  ├─ At each split: sample √p features randomly
+  └─ Grow full tree (no pruning needed — diversity handles it)
+
+Prediction:
+  Input ──► Tree₁ ──► vote₁ ─┐
+  Input ──► Tree₂ ──► vote₂ ─┼──► Majority vote ──► Final class
+  Input ──► TreeN ──► voteN ─┘
+```
+**More robust to overfitting** than a single tree. Slower but usually more accurate.
+            """)
+
+        # ── Naïve Bayes ──────────────────────────────────────────
+        with meth_tabs[7]:
+            st.markdown("""### Naïve Bayes — How it works""")
+            st.markdown("""
+Naïve Bayes applies **Bayes' theorem** with the "naïve" assumption that features are conditionally independent given the class.
+
+**Bayes' theorem:**
+```
+P(class | features) ∝ P(class) × P(x₁|class) × P(x₂|class) × … × P(xₙ|class)
+```
+
+**Key concepts:**
+- **Prior P(class)** — how frequent is each class in training data?
+- **Likelihood P(xᵢ|class)** — for Gaussian NB: modelled as a normal distribution per feature per class
+- **Posterior** — multiply prior × all likelihoods; assign the class with highest posterior
+- **Var smoothing** — adds a tiny variance floor to prevent zero-probability issues
+
+**Flowchart:**
+```
+Training:
+  For each class:
+    Estimate mean and variance of each feature
+    Estimate class prior
+
+Prediction:
+  For each class:
+    Compute log P(class) + Σ log P(xᵢ | class)  ← sum of log-likelihoods
+  
+  Assign class with highest score
+```
+**Strengths:** Very fast; works well on high-dimensional data; good baseline.
+**Weakness:** Independence assumption rarely holds perfectly in practice.
+            """)
 
     # ── Re-run with different params ──────────────────────────────
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
