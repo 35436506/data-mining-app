@@ -24,7 +24,24 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
 .main { background: #0d1117; }
 .stApp { background: linear-gradient(135deg, #0d1117 0%, #161b22 100%); color: #e6edf3; }
 
-h1,h2,h3 { font-family: 'Space Mono', monospace; }
+h1,h2,h3 { font-family: 'Space Mono', monospace; color: #e6edf3; }
+
+/* Force white text in all Streamlit widgets on dark bg */
+.stMarkdown, .stText, p, span, div { color: inherit; }
+[data-testid="stMetricValue"] { color: #e6edf3 !important; }
+[data-testid="stMetricLabel"] { color: #8b949e !important; }
+[data-testid="stDataFrame"] { color: #e6edf3 !important; }
+.stDataFrame td, .stDataFrame th { color: #e6edf3 !important; background: #161b22 !important; }
+.stSelectbox div[data-baseweb="select"] { background: #161b22 !important; color: #e6edf3 !important; }
+.stMultiSelect div[data-baseweb="select"] { background: #161b22 !important; color: #e6edf3 !important; }
+div[data-baseweb="option"] { background: #161b22 !important; color: #e6edf3 !important; }
+div[data-baseweb="popover"] { background: #161b22 !important; }
+.stTextInput input, .stTextArea textarea { color: #e6edf3 !important; background: #161b22 !important; }
+.stSlider [data-testid="stTickBarMin"], .stSlider [data-testid="stTickBarMax"] { color: #c9d1d9 !important; }
+.stInfo, .stSuccess, .stWarning, .stError { color: #e6edf3 !important; }
+/* Tab text */
+button[data-baseweb="tab"] { color: #8b949e !important; }
+button[data-baseweb="tab"][aria-selected="true"] { color: #58a6ff !important; }
 
 .hero-title {
     font-family: 'Space Mono', monospace;
@@ -273,9 +290,9 @@ METHODS = {
 }
 
 GROUP_META = {
-    "classification": {"label": "Classification / Phan loai", "color": "#58a6ff", "icon": "🔵"},
-    "prediction":     {"label": "Prediction / Du bao", "color": "#bc8cff", "icon": "🟣"},
-    "association":    {"label": "Association, Clustering & Balancing", "color": "#f778ba", "icon": "🔴"},
+    "classification": {"label": "Classification / Phân loại", "color": "#58a6ff", "icon": "🔵"},
+    "prediction":     {"label": "Prediction / Dự báo", "color": "#bc8cff", "icon": "🟣"},
+    "association":    {"label": "Association, Clustering & Balancing / Kết hợp, Phân cụm & Cân bằng", "color": "#f778ba", "icon": "🔴"},
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -484,6 +501,124 @@ def encode_df(df: pd.DataFrame):
     return df
 
 
+def suggest_target_column(df: pd.DataFrame) -> str | None:
+    """Heuristically guess the most likely target/dependent column."""
+    TARGET_KEYWORDS = [
+        "label", "target", "class", "churn", "fraud", "default", "outcome",
+        "result", "status", "y", "output", "dependent", "response",
+        "predict", "category", "nhãn", "kết_quả", "mục_tiêu",
+    ]
+    cols_lower = {c: c.lower().replace(" ", "_") for c in df.columns}
+    # 1. Exact or substring keyword match
+    for col, col_l in cols_lower.items():
+        for kw in TARGET_KEYWORDS:
+            if kw in col_l:
+                return col
+    # 2. Last column heuristic (common ML convention)
+    # Only use if it's numeric or binary
+    last = df.columns[-1]
+    if df[last].nunique() <= 20:
+        return last
+    return None
+
+
+def show_algorithm_flowchart(method: str):
+    """Display a simple text-based flowchart and parameter explanation for each method."""
+    FLOWCHARTS = {
+        "Logistic Regression": {
+            "steps": ["📥 Input features (X)", "⚖️ Multiply by learned weights + bias", "📈 Apply Sigmoid function → probability 0–1", "🏷️ Threshold at 0.5 → Class 0 or Class 1"],
+            "params": "**max_iter=1000** — max training iterations; **C** — regularisation strength (default 1.0)",
+            "note": "Best for: binary outcomes, interpretable coefficients. Assumes linear decision boundary.",
+        },
+        "Linear Discriminant Analysis (LDA)": {
+            "steps": ["📥 Input features", "📊 Compute mean & variance per class", "📐 Find axes that maximise class separation", "🏷️ Project & classify by nearest centroid"],
+            "params": "No key hyperparameters. Assumes equal covariance per class (Gaussian).",
+            "note": "Best for: well-separated classes, small datasets. Also used for dimensionality reduction.",
+        },
+        "K-Nearest Neighbors (KNN)": {
+            "steps": ["📥 New data point arrives", "📏 Calculate distance to ALL training points", f"👥 Pick K nearest neighbours (default K=5)", "🗳️ Majority vote → predicted class"],
+            "params": "**n_neighbors=5** — number of neighbours K; **metric** — distance measure (Euclidean default).",
+            "note": "Best for: small–medium datasets. No training phase. Slow at prediction on large data.",
+        },
+        "Classification Trees": {
+            "steps": ["📥 All training data at root node", "✂️ Find best feature + threshold to split (Gini/Entropy)", "🌿 Recurse on each branch until max_depth or pure leaf", "🏷️ Leaf node → majority class label"],
+            "params": "**max_depth=5** — limits tree depth to prevent overfitting.",
+            "note": "Best for: interpretability — you can read the IF-THEN rules directly.",
+        },
+        "Naive Bayes": {
+            "steps": ["📥 Input features", "📊 Compute P(class) and P(feature|class) from training data", "✖️ Multiply probabilities (naive independence)", "🏷️ Pick class with highest posterior probability"],
+            "params": "No key hyperparameters for Gaussian NB. Assumes features are normally distributed.",
+            "note": "Best for: text classification, high-dimensional sparse data. Very fast.",
+        },
+        "Support Vector Machine (SVM)": {
+            "steps": ["📥 Input features (scaled)", "📐 Find hyperplane with maximum margin between classes", "🔲 Support vectors = closest points define the margin", "🏷️ New points classified by which side of hyperplane"],
+            "params": "**kernel='rbf'** — maps to higher dimensions; **C** — margin softness; **gamma** — kernel width.",
+            "note": "Best for: high-dimensional data, text, images. Slow on very large datasets.",
+        },
+        "Random Forest": {
+            "steps": ["📥 Training data", "🌲×100 Build 100 decision trees on random data subsets + random features", "🗳️ Each tree votes on new sample", "🏆 Majority vote → final prediction + feature importance scores"],
+            "params": "**n_estimators=100** — number of trees; **max_features='sqrt'** — features per split.",
+            "note": "Best for: most datasets. Robust, handles missing values, gives feature importance.",
+        },
+        "Neural Networks (MLP)": {
+            "steps": ["📥 Input layer (one node per feature)", "🔗 Hidden layers apply weights + ReLU activation", "🔁 Backpropagation adjusts weights to minimise loss", "📤 Output layer → class probabilities (Softmax)"],
+            "params": "**hidden_layer_sizes=(100,)** — neurons per layer; **max_iter=500** — training epochs; **activation='relu'**.",
+            "note": "Best for: complex non-linear patterns, large datasets. Less interpretable.",
+        },
+        "Linear Regression": {
+            "steps": ["📥 Input features (X)", "⚖️ Fit weights to minimise Sum of Squared Errors", "📈 Output = w₁x₁ + w₂x₂ + … + b (continuous value)", "📊 Evaluate with R² and RMSE"],
+            "params": "No key hyperparameters. Assumes linear relationship between features and target.",
+            "note": "Best for: continuous target, interpretable coefficients showing feature impact.",
+        },
+        "Neural Networks Regression (MLP)": {
+            "steps": ["📥 Input features", "🔗 Hidden layers apply non-linear transformations", "🔁 Backpropagation minimises Mean Squared Error", "📤 Output layer → single continuous value"],
+            "params": "**hidden_layer_sizes=(100,)** — neurons; **max_iter=500** — epochs; **activation='relu'**.",
+            "note": "Best for: non-linear regression with complex patterns. Needs more data than Linear Regression.",
+        },
+        "Association Rules (Apriori)": {
+            "steps": ["📥 Transactional data (basket of items per row)", "🔍 Find all itemsets with support ≥ min_support", "📏 Compute confidence & lift for each rule", "📋 Filter rules by min_confidence and min_lift thresholds"],
+            "params": "**min_support** — how often itemset appears; **min_confidence** — rule reliability; **min_lift** — improvement over random.",
+            "note": "Best for: market basket analysis, recommendation systems.",
+        },
+        "K-Means Clustering": {
+            "steps": ["📥 Input data (no labels)", "🎯 Randomly place K centroids", "🔁 Assign each point to nearest centroid → recompute centroids", "✅ Repeat until centroids stop moving"],
+            "params": "**n_clusters=K** — number of groups; **n_init=10** — random restarts to avoid local optima.",
+            "note": "Best for: customer segmentation. Use Elbow Curve to choose K.",
+        },
+        "Hierarchical Clustering": {
+            "steps": ["📥 Input data (no labels)", "📏 Compute pairwise distances between all points", "🌿 Merge closest pair into a cluster (Ward linkage)", "🌲 Build dendrogram — cut at desired level for K clusters"],
+            "params": "**n_clusters** — where to cut dendrogram; **linkage='ward'** — minimises within-cluster variance.",
+            "note": "Best for: exploring natural groupings without specifying K upfront.",
+        },
+        "Random Oversampling": {
+            "steps": ["📥 Imbalanced dataset (e.g. 90% Class 0, 10% Class 1)", "🔍 Identify minority class samples", "🔁 Randomly duplicate minority samples with replacement", "✅ Output: balanced dataset for training"],
+            "params": "**random_state=42** — reproducibility. No other parameters.",
+            "note": "Use before classification when classes are heavily imbalanced (e.g. fraud detection).",
+        },
+        "SMOTE": {
+            "steps": ["📥 Imbalanced dataset", "🔍 For each minority sample, find K nearest minority neighbours", "🧬 Generate synthetic point along the line between sample and a neighbour", "✅ Output: richer balanced dataset"],
+            "params": "**k_neighbors=5** — neighbours for synthesis; **random_state=42** — reproducibility.",
+            "note": "Better than Random Oversampling — creates new data rather than duplicates. Needs ≥6 minority samples.",
+        },
+    }
+
+    info = FLOWCHARTS.get(method)
+    if not info:
+        return
+
+    with st.expander(f"📊 Sơ đồ thuật toán / Algorithm Flowchart — {method}", expanded=False):
+        st.markdown("**Các bước hoạt động / How it works:**")
+        flow_html = '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:1rem;">'
+        for i, step in enumerate(info["steps"]):
+            flow_html += f'<div style="background:#1a2332;border:1px solid #30363d;border-radius:8px;padding:6px 12px;color:#c9d1d9;font-size:0.82rem">{step}</div>'
+            if i < len(info["steps"]) - 1:
+                flow_html += '<div style="color:#58a6ff;font-size:1.1rem">→</div>'
+        flow_html += '</div>'
+        st.markdown(flow_html, unsafe_allow_html=True)
+        st.markdown(f"**Tham số chính / Key parameters:** {info['params']}")
+        st.info(f"💡 {info['note']}")
+
+
 def fig_to_st(fig):
     st.pyplot(fig)
     plt.close(fig)
@@ -493,8 +628,9 @@ def fig_to_st(fig):
 # ML runners
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_classification(method, df, target, features, test_size, balance):
-    st.markdown('<div class="section-header">⚙️ Training & Evaluation</div>', unsafe_allow_html=True)
+def run_classification(method, df, target, features, test_size, balance, show_ui=True):
+    if show_ui:
+        st.markdown('<div class="section-header">⚙️ Training & Evaluation</div>', unsafe_allow_html=True)
     df_enc = encode_df(df[features + [target]].dropna())
     X = df_enc[features].values
     y = df_enc[target].values
@@ -503,16 +639,20 @@ def run_classification(method, df, target, features, test_size, balance):
 
     if balance == "Random Oversampling":
         X, y = RandomOverSampler(random_state=42).fit_resample(X, y)
-        st.info("✅ Applied Random Oversampling.")
+        if show_ui:
+            st.info("✅ Applied Random Oversampling.")
     elif balance == "SMOTE":
         try:
             X, y = SMOTE(random_state=42).fit_resample(X, y)
-            st.info("✅ Applied SMOTE.")
+            if show_ui:
+                st.info("✅ Applied SMOTE.")
         except Exception as e:
-            st.warning(f"SMOTE skipped: {e}")
+            if show_ui:
+                st.warning(f"SMOTE skipped: {e}")
 
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42)
 
+    from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score
     models = {
         "Logistic Regression": LogisticRegression(max_iter=1000),
         "Linear Discriminant Analysis (LDA)": LinearDiscriminantAnalysis(),
@@ -528,9 +668,38 @@ def run_classification(method, df, target, features, test_size, balance):
     y_pred = mdl.predict(X_te)
     acc = accuracy_score(y_te, y_pred)
 
+    is_binary = len(np.unique(y)) == 2
+    avg = "binary" if is_binary else "weighted"
+    prec  = precision_score(y_te, y_pred, average=avg, zero_division=0)
+    rec   = recall_score(y_te, y_pred, average=avg, zero_division=0)
+    f1    = f1_score(y_te, y_pred, average=avg, zero_division=0)
+    try:
+        if is_binary:
+            auc = roc_auc_score(y_te, mdl.predict_proba(X_te)[:, 1])
+        else:
+            auc = roc_auc_score(y_te, mdl.predict_proba(X_te), multi_class="ovr", average="weighted")
+    except Exception:
+        auc = None
+
+    metrics = {
+        "Method": method,
+        "Accuracy": f"{acc:.4f}",
+        "Precision": f"{prec:.4f}",
+        "Recall": f"{rec:.4f}",
+        "F1-Score": f"{f1:.4f}",
+        "AUC": f"{auc:.4f}" if auc is not None else "N/A",
+        "Train rows": len(X_tr),
+        "Test rows": len(X_te),
+    }
+
+    if not show_ui:
+        return metrics
+
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Accuracy", f"{acc:.2%}")
+        st.metric("F1-Score", f"{f1:.4f}")
+        st.metric("AUC", f"{auc:.4f}" if auc is not None else "N/A")
         st.text(classification_report(y_te, y_pred))
     with col2:
         fig, ax = plt.subplots(figsize=(5, 4))
@@ -538,7 +707,8 @@ def run_classification(method, df, target, features, test_size, balance):
         ax.set_facecolor('#161b22')
         cm = confusion_matrix(y_te, y_pred)
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                    linewidths=0.5, linecolor='#30363d')
+                    linewidths=0.5, linecolor='#30363d',
+                    annot_kws={"color": "#ffffff"})
         ax.set_title("Confusion Matrix", color='#e6edf3')
         ax.tick_params(colors='#8b949e')
         fig_to_st(fig)
@@ -551,7 +721,7 @@ def run_classification(method, df, target, features, test_size, balance):
         ax2.set_facecolor('#161b22')
         fi.head(15).plot(kind='bar', ax=ax2, color='#58a6ff')
         ax2.set_title("Feature Importances", color='#e6edf3')
-        ax2.tick_params(colors='#8b949e')
+        ax2.tick_params(colors='#8b949e', labelcolor='#c9d1d9')
         plt.tight_layout()
         fig_to_st(fig2)
     elif hasattr(mdl, "coef_"):
@@ -562,12 +732,14 @@ def run_classification(method, df, target, features, test_size, balance):
         ax2.set_facecolor('#161b22')
         coef.head(15).plot(kind='bar', ax=ax2, color='#bc8cff')
         ax2.set_title("Coefficient Magnitudes", color='#e6edf3')
-        ax2.tick_params(colors='#8b949e')
+        ax2.tick_params(colors='#8b949e', labelcolor='#c9d1d9')
         plt.tight_layout()
         fig_to_st(fig2)
 
     if method == "Classification Trees":
         st.code(export_text(mdl, feature_names=features, max_depth=4), language="")
+
+    return metrics
 
 
 def run_regression(method, df, target, features, test_size):
@@ -600,10 +772,10 @@ def run_regression(method, df, target, features, test_size):
         ax.scatter(y_te, y_pred, alpha=0.6, color='#58a6ff', edgecolors='none')
         mn, mx = min(y_te.min(), y_pred.min()), max(y_te.max(), y_pred.max())
         ax.plot([mn, mx], [mn, mx], 'r--', lw=1.5)
-        ax.set_xlabel("Actual", color='#8b949e')
-        ax.set_ylabel("Predicted", color='#8b949e')
+        ax.set_xlabel("Actual", color='#c9d1d9')
+        ax.set_ylabel("Predicted", color='#c9d1d9')
         ax.set_title("Actual vs Predicted", color='#e6edf3')
-        ax.tick_params(colors='#8b949e')
+        ax.tick_params(colors='#c9d1d9')
         fig_to_st(fig)
 
     if method == "Linear Regression":
@@ -757,8 +929,10 @@ for k, v in {
     "active_sheet": None,
     "ai_suggestion": "",
     "chosen_method": None,
+    "selected_methods": [],
+    "comparison_results": [],
     "step": 1,
-    "gemini_key": "",  # user must provide their own fresh key
+    "gemini_key": "",
     "openrouter_key": "",
 }.items():
     if k not in st.session_state:
@@ -770,7 +944,7 @@ for k, v in {
 with st.sidebar:
     st.markdown('<p class="section-header">📁 Data Upload</p>', unsafe_allow_html=True)
     uploaded_files = st.file_uploader(
-        "Tai len CSV, Excel, JSON hoac TXT / Upload CSV, Excel, JSON, or TXT",
+        "Tải lên CSV, Excel, JSON hoặc TXT / Upload CSV, Excel, JSON, or TXT",
         accept_multiple_files=True,
         type=["csv", "xlsx", "xls", "json", "txt"],
     )
@@ -785,7 +959,7 @@ with st.sidebar:
         st.session_state["sheets"] = all_sheets
 
         st.markdown('<p class="section-header">📊 Select Dataset</p>', unsafe_allow_html=True)
-        chosen = st.selectbox("Bo du lieu hien tai / Active dataset", list(all_sheets.keys()))
+        chosen = st.selectbox("Bộ dữ liệu hiện tại / Active dataset", list(all_sheets.keys()))
         st.session_state["active_sheet"] = chosen
 
         df_active = all_sheets[chosen]
@@ -795,8 +969,8 @@ with st.sidebar:
 
         if len(all_sheets) > 1:
             st.markdown('<p class="section-header">🔗 Merge Datasets</p>', unsafe_allow_html=True)
-            merge_on = st.text_input("Cot khoa chung (de gop) / Common key column", "")
-            if st.button("Tu dong gop tat ca / Auto-merge all") and merge_on:
+            merge_on = st.text_input("Cột khóa chung (để gộp) / Common key column", "")
+            if st.button("Tự động gộp tất cả / Auto-merge all") and merge_on:
                 merged = None
                 for df in all_sheets.values():
                     if merge_on in df.columns:
@@ -809,7 +983,7 @@ with st.sidebar:
     st.markdown('<p class="section-header">🔑 AI API Keys</p>', unsafe_allow_html=True)
     st.markdown(
         '<p style="color:#8b949e;font-size:0.78rem">'
-        'Nhap it nhat mot khoa de bat phan tich AI. '
+        'Nhập ít nhất một khóa để bật phân tích AI. '
         'All ML methods work without a key.</p>',
         unsafe_allow_html=True,
     )
@@ -829,7 +1003,7 @@ with st.sidebar:
         help="Get a free key at aistudio.google.com (15 req/min free tier)",
     )
     st.text_input(
-        "Khoa OpenRouter API (mien phi) / OpenRouter API Key",
+        "Khóa OpenRouter API (miễn phí) / OpenRouter API Key",
         key="openrouter_key",      # directly syncs with st.session_state["openrouter_key"]
         type="password",
         placeholder="sk-or-...",
@@ -856,21 +1030,21 @@ with st.sidebar:
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="hero-title">🧠 DataMine AI</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="hero-sub">Tai du lieu len - Mo ta muc tieu - De AI huong dan phan tich</div>'
+    '<div class="hero-sub">Tải dữ liệu lên · Mô tả mục tiêu · Để AI hướng dẫn phân tích</div>'
     '<div style="color:#6e7681;font-size:0.85rem;margin-bottom:1rem">'
-    'Upload your data - Describe your goal - Let AI guide your analysis</div>',
+    'Upload your data · Describe your goal · Let AI guide your analysis</div>',
     unsafe_allow_html=True,
 )
 
 if not st.session_state["sheets"]:
     st.markdown("""
     <div class="card card-accent">
-    <b style="color:#58a6ff">👋 Welcome!</b><br><br>
-    <ol style="color:#8b949e;line-height:2">
-      <li>Tai len mot hoac nhieu tep du lieu o thanh ben (CSV, Excel, JSON, TXT).<br><small>Upload one or more data files in the sidebar.</small></li>
-      <li>Mo ta muc tieu cua ban — AI se de xuat phuong phap phu hop.<br><small>Describe your goal — AI will suggest a method.</small></li>
-      <li>Cau hinh tham so va chay ky thuat da chon.<br><small>Configure parameters and run the chosen technique.</small></li>
-      <li>Xem ket qua, bieu do va giai thich tu AI.<br><small>View results, charts, and AI interpretation.</small></li>
+    <b style="color:#58a6ff">👋 Chào mừng! / Welcome!</b><br><br>
+    <ol style="color:#c9d1d9;line-height:2">
+      <li>Tải lên một hoặc nhiều tệp dữ liệu ở thanh bên (CSV, Excel, JSON, TXT).<br><small>Upload one or more data files in the sidebar.</small></li>
+      <li>Mô tả mục tiêu của bạn — AI sẽ đề xuất phương pháp phù hợp.<br><small>Describe your goal — AI will suggest a method.</small></li>
+      <li>Cấu hình tham số và chạy kỹ thuật đã chọn.<br><small>Configure parameters and run the chosen technique.</small></li>
+      <li>Xem kết quả, biểu đồ và giải thích từ AI.<br><small>View results, charts, and AI interpretation.</small></li>
     </ol>
     </div>
     """, unsafe_allow_html=True)
@@ -895,10 +1069,10 @@ with st.expander("🔍 Xem truoc Du lieu / Data Preview & Profile", expanded=Fal
 st.divider()
 
 # ── Step 2 – AI Goal Understanding ───────────────────────────────────────────
-st.markdown('<div class="section-header">🤖 Buoc 1 / Step 1 - Mo ta Muc tieu / Describe Your Goal</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🤖 Bước 1 / Step 1 — Mô tả Mục tiêu / Describe Your Goal</div>', unsafe_allow_html=True)
 
 user_goal = st.text_area(
-    "Ban muon dat duoc dieu gi? / What do you want to achieve? (in any language)",
+    "Bạn muốn đạt được điều gì? / What do you want to achieve? (in any language)",
     placeholder="e.g. 'I want to predict customer churn', 'Find which products are bought together', "
                 "'Segment customers into groups', 'Classify emails as spam or not'…",
     height=80,
@@ -914,8 +1088,8 @@ if not _g_key and not _o_key:
         icon="🔑",
     )
 
-if st.button("🔎 Phan tich Muc tieu voi AI / Analyse Goal with AI"):
-    with st.spinner("AI dang doc du lieu va muc tieu cua ban..."):
+if st.button("🔎 Phân tích Mục tiêu với AI / Analyse Goal with AI"):
+    with st.spinner("AI đang đọc dữ liệu và mục tiêu của bạn..."):
         # Use multi-sheet analysis if multiple datasets loaded, else single
         all_sheets_loaded = st.session_state.get("sheets", {})
         if len(all_sheets_loaded) > 1:
@@ -958,15 +1132,15 @@ if st.session_state["ai_suggestion"]:
     # Collapse triple+ newlines
     clean = _re.sub(r"\n{3,}", "\n\n", clean)
 
-    with st.expander("🤖 AI Analysis (click to expand / Nhan de mo rong)", expanded=True):
+    with st.expander("🤖 Phân tích AI (nhấn để mở rộng / click to expand)", expanded=True):
         col_lang1, col_lang2 = st.columns([1, 1])
         with col_lang1:
             st.markdown("**English Analysis**")
             st.text(clean[:3000] + ("..." if len(clean) > 3000 else ""))
         with col_lang2:
-            st.markdown("**Phan tich (Vietnamese / Tieng Viet)**")
-            if st.button("Dich sang Tieng Viet", key="translate_btn"):
-                with st.spinner("Dang dich..."):
+            st.markdown("**Phân tích (Tiếng Việt)**")
+            if st.button("Dịch sang Tiếng Việt", key="translate_btn"):
+                with st.spinner("Đang dịch..."):
                     vn_prompt = f"""Translate the following data mining analysis into clear, natural Vietnamese.
 Keep the structure and all technical terms (Random Forest, SMOTE, Logistic Regression, etc.) in English but explain them in Vietnamese.
 Remove all markdown symbols like *, #, ** from both input and output.
@@ -982,13 +1156,13 @@ Text to translate:
                 vn_clean = _re.sub(r"^[-•]\s+", "  ", vn_clean, flags=_re.MULTILINE)
                 st.text(vn_clean)
             else:
-                st.info("Nhan nut phia tren de dich sang Tieng Viet")
+                st.info("Nhấn nút phía trên để dịch sang Tiếng Việt")
 
     # ── AI Quick Recommendation Summary ──────────────────────────────────────
     st.markdown("---")
-    st.markdown("#### Huong dan nhanh / Quick Recommendation")
+    st.markdown("#### Hướng dẫn nhanh / Quick Recommendation")
     st.markdown(
-        "Dua tren phan tich AI, hay chon mot trong cac phuong phap phu hop nhat duoi day "
+        "Dựa trên phân tích AI, hãy chọn một trong các phương pháp phù hợp nhất dưới đây "
         "(Based on the AI analysis, select the most suitable method below):"
     )
 
@@ -1013,16 +1187,16 @@ Text to translate:
                     f'<small style="color:#c9d1d9">{m_meta["vn"]}</small></div>',
                     unsafe_allow_html=True,
                 )
-                if st.button(f"Chon / Select", key=f"rec_{m_name}"):
+                if st.button(f"Chọn / Select", key=f"rec_{m_name}"):
                     st.session_state["chosen_method"] = m_name
                     st.rerun()
     else:
-        st.info("Khong phat hien phuong phap cu the. Hay chon tu danh sach phia duoi.")
+        st.info("Không phát hiện phương pháp cụ thể. Hãy chọn từ danh sách phía dưới.")
 
 st.divider()
 
 # ── Step 3 – Method Selection ─────────────────────────────────────────────────
-st.markdown('<div class="section-header">🛠️ Buoc 2 / Step 2 - Chon Phuong phap / Choose a Method</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🛠️ Bước 2 / Step 2 — Chọn Phương pháp / Choose a Method</div>', unsafe_allow_html=True)
 
 for group_id, gmeta in GROUP_META.items():
     st.markdown(f"**{gmeta['icon']} {gmeta['label']}**")
@@ -1030,10 +1204,12 @@ for group_id, gmeta in GROUP_META.items():
     methods_in_group = [(n, m) for n, m in METHODS.items() if m["group"] == group_id]
     for i, (name, meta) in enumerate(methods_in_group):
         with cols[i % 3]:
-            selected = st.session_state["chosen_method"] == name
-            border = "2px solid #58a6ff" if selected else "1px solid #30363d"
+            selected_single  = st.session_state["chosen_method"] == name
+            selected_multi   = name in st.session_state["selected_methods"]
+            border = "2px solid #58a6ff" if selected_single else ("2px solid #3fb950" if selected_multi else "1px solid #30363d")
+            bg     = "#1a2332" if selected_single else ("#1a3a2a" if selected_multi else "#161b22")
             st.markdown(
-                f'<div style="background:#161b22;border:{border};border-radius:10px;'
+                f'<div style="background:{bg};border:{border};border-radius:10px;'
                 f'padding:0.8rem;margin-bottom:0.6rem;">'
                 f'<span class="badge {meta["badge"]}">{group_id.upper()}</span><br>'
                 f'<b style="color:#e6edf3">{name}</b><br>'
@@ -1042,17 +1218,42 @@ for group_id, gmeta in GROUP_META.items():
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            if st.button(f"Select", key=f"sel_{name}"):
-                st.session_state["chosen_method"] = name
-                st.rerun()
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                if st.button("▶ Chọn", key=f"sel_{name}"):
+                    st.session_state["chosen_method"] = name
+                    st.rerun()
+            with bc2:
+                if selected_multi:
+                    if st.button("✓ So sánh", key=f"cmp_{name}", help="Bỏ khỏi danh sách so sánh"):
+                        st.session_state["selected_methods"].remove(name)
+                        st.rerun()
+                else:
+                    if st.button("＋ So sánh", key=f"cmp_{name}", help="Thêm vào bảng so sánh"):
+                        st.session_state["selected_methods"].append(name)
+                        st.rerun()
     st.markdown("")
+
+# Show comparison badge
+if st.session_state["selected_methods"]:
+    st.markdown(
+        f'<div style="background:#1a3a2a;border:1px solid #3fb950;border-radius:8px;padding:0.6rem 1rem;color:#3fb950;">'
+        f'📊 <b>So sánh đa phương pháp / Multi-method comparison:</b> '
+        + " · ".join([f"<span style='background:#0d2b1a;padding:2px 8px;border-radius:4px'>{m}</span>" for m in st.session_state["selected_methods"]])
+        + f' &nbsp;<small>(Chạy từng phương pháp để xem bảng so sánh / Run each method to populate the table)</small></div>',
+        unsafe_allow_html=True,
+    )
+    if st.button("🗑️ Xóa danh sách so sánh / Clear comparison list"):
+        st.session_state["selected_methods"] = []
+        st.session_state["comparison_results"] = []
+        st.rerun()
 
 st.divider()
 
 # ── Step 4 – Configure & Run ──────────────────────────────────────────────────
 method = st.session_state["chosen_method"]
 if not method:
-    st.info("👆 Hay chon mot phuong phap o tren de cau hinh va chay / Select a method above.")
+    st.info("👆 Hãy chọn một phương pháp ở trên để cấu hình và chạy / Select a method above.")
     st.stop()
 
 st.markdown(f'<div class="section-header">⚡ Step 3 — Configure & Run: {method}</div>',
@@ -1067,26 +1268,48 @@ all_cols = df_active.columns.tolist()
 
 group = meta["group"]
 
+# ── Show algorithm flowchart ─────────────────────────────────────────────────
+show_algorithm_flowchart(method)
+
 # ── Classification & Prediction shared config ────────────────────────────────
 if group in ("classification", "prediction") or method in ("Random Oversampling", "SMOTE"):
     col_a, col_b = st.columns(2)
     with col_a:
-        target_col = st.selectbox("🎯 Cot muc tieu / Target column", all_cols)
+        # Auto-detect target column
+        auto_target = suggest_target_column(df_active)
+        default_idx = all_cols.index(auto_target) if auto_target and auto_target in all_cols else 0
+        if auto_target:
+            st.markdown(
+                f'<small style="color:#3fb950">✅ Cột mục tiêu đề xuất tự động: <b>{auto_target}</b></small>',
+                unsafe_allow_html=True,
+            )
+        target_col = st.selectbox("🎯 Cột mục tiêu / Target column", all_cols, index=default_idx)
     with col_b:
         feature_cols = st.multiselect(
-            "📐 Cac cot dac trung / Feature columns",
+            "📐 Các cột đặc trưng / Feature columns",
             [c for c in all_cols if c != target_col],
             default=[c for c in numeric_cols if c != target_col][:8],
         )
 
 if group == "classification":
-    test_size = st.slider("Ty le kiem tra % / Test split %", 10, 40, 20) / 100
-    balance_opt = st.selectbox("Can bang lop (tuy chon) / Class balancing (optional)",
+    test_size = st.slider(
+        "Tỷ lệ kiểm tra % / Test split %  ℹ️  (Phần dữ liệu dùng để đánh giá — không dùng để huấn luyện. "
+        "Ví dụ: 20% = 80% train, 20% test để đo độ chính xác thực tế.)",
+        10, 40, 20
+    ) / 100
+    balance_opt = st.selectbox("Cân bằng lớp (tùy chọn) / Class balancing (optional)",
                                ["None", "Random Oversampling", "SMOTE"])
 elif group == "prediction" and method != "Neural Networks Regression (MLP)":
-    test_size = st.slider("Test split %", 10, 40, 20) / 100
+    test_size = st.slider(
+        "Test split %  ℹ️  (Percentage of data held out for evaluation — not used in training. "
+        "E.g. 20% = model trains on 80%, is evaluated on the remaining 20%.)",
+        10, 40, 20
+    ) / 100
 elif group == "prediction":
-    test_size = st.slider("Test split %", 10, 40, 20) / 100
+    test_size = st.slider(
+        "Test split %  ℹ️  (Percentage of data held out for evaluation — not used in training.)",
+        10, 40, 20
+    ) / 100
 
 if method == "Association Rules (Apriori)":
     c1, c2, c3 = st.columns(3)
@@ -1102,11 +1325,12 @@ if method in ("K-Means Clustering", "Hierarchical Clustering"):
         n_clusters = st.slider("Number of clusters (K)", 2, 10, 3)
 
 if st.button(f"🚀 Run {method}", type="primary"):
+    result_metrics = None
     if group == "classification" and method not in ("Random Oversampling", "SMOTE"):
         if not feature_cols:
             st.error("Select at least one feature column.")
         else:
-            run_classification(method, df_active, target_col, feature_cols, test_size,
+            result_metrics = run_classification(method, df_active, target_col, feature_cols, test_size,
                                balance_opt if 'balance_opt' in dir() else "None")
 
     elif group == "prediction":
@@ -1130,26 +1354,81 @@ if st.button(f"🚀 Run {method}", type="primary"):
         else:
             run_balancing(method, df_active, target_col, feature_cols)
 
+    # ── Store comparison metrics if method is in selected_methods ────────────
+    if result_metrics and method in st.session_state["selected_methods"]:
+        existing = [r for r in st.session_state["comparison_results"] if r["Method"] != method]
+        existing.append(result_metrics)
+        st.session_state["comparison_results"] = existing
+        st.success(f"✅ Đã thêm kết quả {method} vào bảng so sánh / Added to comparison table.")
+
     # ── AI interpretation ─────────────────────────────────────────────────────
     st.divider()
     st.markdown('<div class="section-header">🤖 AI Result Interpretation</div>',
                 unsafe_allow_html=True)
-    with st.spinner("Gemini is interpreting the results…"):
-        interp_prompt = f"""
-You are a data mining expert.
-The user just ran **{method}** on this dataset:
+
+    metrics_context = ""
+    if result_metrics:
+        metrics_context = f"""
+PERFORMANCE METRICS (calculated from this run):
+  Accuracy:      {result_metrics['Accuracy']}
+  Precision:     {result_metrics['Precision']}
+  Recall:        {result_metrics['Recall']}
+  F1-Score:      {result_metrics['F1-Score']}
+  AUC:           {result_metrics['AUC']}
+  Training rows: {result_metrics['Train rows']}
+  Test rows:     {result_metrics['Test rows']}
+"""
+
+    with st.spinner("AI đang phân tích kết quả..."):
+        interp_prompt = f"""You are a data mining expert providing a post-run analysis report.
+
+METHOD USED: {method}
+
+DATASET SUMMARY:
 {df_summary(df_active)}
 
-User's original goal: {user_goal or '(not specified)'}
+USER GOAL: {user_goal or '(not specified)'}
+{metrics_context}
+Your analysis must cover ALL of the following points:
 
-Please:
-1. Explain what the results likely mean in plain language.
-2. Highlight what went well and any limitations.
-3. Suggest the next steps the user should take.
-4. Suggest 1-2 alternative methods they could try.
+1. Plain-language explanation of what the results mean given the metrics above.
+2. Performance assessment: Is Accuracy / F1 / AUC strong or weak? Flag any AUC below 0.7 clearly.
+3. Limitations of {method} specific to this dataset — for example: independence assumptions (Naive Bayes, Logistic Regression), interpretability constraints, sensitivity to class imbalance, overfitting risk.
+4. Feature importance: if coefficients or importances were computed, discuss which features appear most influential.
+5. Class imbalance: if one class is much rarer (e.g. fraud detection), recommend SMOTE.
+6. Concrete next steps: what should the user do after this result?
+7. One or two alternative methods and why they might perform better here.
 
-Keep it concise and practical. Respond in the same language the user used (default English).
-"""
+MANDATORY FORMATTING RULES — violations will make the output unusable:
+- Do NOT use asterisks, hash symbols, backticks, dashes, or any markdown symbols.
+- Do NOT start lines with - or * or # or bullet points.
+- Write ONLY in plain numbered paragraphs.
+- No special characters of any kind.
+- Maximum 400 words total.
+Respond in the same language the user used (default English)."""
+
         interp = ask_gemini(interp_prompt)
-    st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">Gemini Interpretation</b><br><br>' +
-                interp.replace("\n", "<br>") + "</div>", unsafe_allow_html=True)
+
+    import re as _re2
+    interp_clean = _re2.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", interp)
+    interp_clean = _re2.sub(r"^#+\s*", "", interp_clean, flags=_re2.MULTILINE)
+    interp_clean = _re2.sub(r"^[-•]\s+", "  ", interp_clean, flags=_re2.MULTILINE)
+    interp_clean = _re2.sub(r"`{1,3}", "", interp_clean)
+    interp_clean = _re2.sub(r"\n{3,}", "\n\n", interp_clean)
+
+    st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">AI Interpretation</b></div>',
+                unsafe_allow_html=True)
+    st.text(interp_clean)
+
+# ── Comparison Table (always visible when populated) ─────────────────────────
+if st.session_state.get("comparison_results"):
+    st.divider()
+    st.markdown('<div class="section-header">📊 Bảng So sánh Phương pháp / Method Comparison Table</div>',
+                unsafe_allow_html=True)
+    cmp_df = pd.DataFrame(st.session_state["comparison_results"])
+    st.dataframe(cmp_df.set_index("Method"), use_container_width=True)
+    try:
+        best_row = cmp_df.loc[cmp_df["F1-Score"].astype(float).idxmax()]
+        st.success(f"🏆 Phương pháp tốt nhất theo F1-Score / Best by F1: {best_row['Method']} (F1 = {best_row['F1-Score']})")
+    except Exception:
+        pass
