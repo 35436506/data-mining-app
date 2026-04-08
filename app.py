@@ -314,9 +314,19 @@ def df_summary(df: pd.DataFrame) -> str:
     )
 
 
+def _get_keys():
+    """Read keys from session state — always fresh, never stale."""
+    g = st.session_state.get("gemini_key", "").strip()
+    o = st.session_state.get("openrouter_key", "").strip()
+    # If user never touched the fields, fall back to compiled defaults
+    if not g:
+        g = _DEFAULT_GEMINI_KEY
+    return g, o
+
+
 def _call_openrouter(prompt: str, or_key: str) -> str:
     """Call OpenRouter API — free tier, no billing required."""
-    if not or_key or or_key.strip() == "":
+    if not or_key:
         return ""
     headers = {
         "Authorization": f"Bearer {or_key}",
@@ -324,74 +334,82 @@ def _call_openrouter(prompt: str, or_key: str) -> str:
         "HTTP-Referer": "https://datamine-ai.streamlit.app",
         "X-Title": "DataMine AI",
     }
+    errors = []
     for model in _OPENROUTER_MODELS:
         try:
             resp = _requests.post(
                 _OPENROUTER_URL,
                 headers=headers,
-                json={"model": model,
-                      "messages": [{"role": "user", "content": prompt}],
-                      "max_tokens": 2000},
-                timeout=60,
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2000,
+                },
+                timeout=90,
             )
             data = resp.json()
             if "choices" in data and data["choices"]:
-                return f"🤖 *[via OpenRouter / {model}]*\n\n" + data["choices"][0]["message"]["content"]
-            err = data.get("error", {}).get("message", str(data))
-            if "limit" in err.lower() or "quota" in err.lower():
-                continue
-        except Exception as e:
-            continue
-    return ""
+                txt = data["choices"][0]["message"]["content"]
+                return f"*(AI via OpenRouter · {model})*\n\n{txt}"
+            err_msg = data.get("error", {}).get("message", str(data))
+            errors.append(f"{model}: {err_msg}")
+        except Exception as exc:
+            errors.append(f"{model}: {exc}")
+    # All models failed — return joined errors for debugging
+    return f"__OR_FAIL__: {' | '.join(errors)}"
 
 
 def ask_gemini(prompt: str) -> str:
-    """Try Gemini with user key, then fallback to OpenRouter."""
-    gemini_key = st.session_state.get("gemini_key", _DEFAULT_GEMINI_KEY).strip()
-    or_key     = st.session_state.get("openrouter_key", "").strip()
+    """
+    Try Google Gemini across all candidate models, then OpenRouter, then help text.
+    Reads keys fresh every call so sidebar changes are always picked up.
+    """
+    gemini_key, or_key = _get_keys()
+    gemini_errors = []
 
-    # ── 1. Try Google Gemini ──────────────────────────────────────────────────
-    if gemini_key:
-        last_err = ""
-        for model_name in _GEMINI_CANDIDATES:
-            try:
-                mdl = _make_model(model_name, gemini_key)
-                resp = mdl.generate_content(prompt)
-                return resp.text
-            except Exception as e:
-                last_err = str(e)
-                # quota errors: try next model only if different model might work
-                if "quota" in last_err.lower() and "limit: 0" in last_err.lower():
-                    continue   # free tier for THIS model is 0, try next
-                elif "quota" in last_err.lower():
-                    break      # daily quota hit — no point trying other models
-                continue
+    # ── 1. Try every Gemini model ─────────────────────────────────────────────
+    for model_name in _GEMINI_CANDIDATES:
+        try:
+            mdl = _make_model(model_name, gemini_key)
+            resp = mdl.generate_content(prompt)
+            return resp.text                        # ✅ success
+        except Exception as e:
+            gemini_errors.append(f"{model_name}: {e}")
+            continue                                # always try next model
 
-    # ── 2. Fallback to OpenRouter (free, no billing) ──────────────────────────
+    # ── 2. Fallback to OpenRouter ─────────────────────────────────────────────
     if or_key:
         result = _call_openrouter(prompt, or_key)
-        if result:
+        if result and not result.startswith("__OR_FAIL__"):
             return result
+        or_debug = result  # save for diagnostics
+    else:
+        or_debug = "(no OpenRouter key provided)"
 
-    # ── 3. Helpful error message ──────────────────────────────────────────────
-    tips = """
-❌ **AI analysis unavailable.** To enable it, please provide an API key in the sidebar:
+    # ── 3. Show diagnostics + help ────────────────────────────────────────────
+    gemini_summary = "\n".join(f"  • {e}" for e in gemini_errors)
+    return f"""⚠️ **Both AI providers failed.** Debug info:
 
-**Option A — Google Gemini (recommended)**
-1. Go to [aistudio.google.com](https://aistudio.google.com) and sign in
-2. Click **Get API Key → Create API key**
-3. Paste it into **"Gemini API Key"** in the sidebar
-> Free tier: 15 req/min, 1,500 req/day with gemini-2.0-flash-lite
+**Gemini errors:**
+{gemini_summary}
 
-**Option B — OpenRouter (totally free, no card needed)**
-1. Go to [openrouter.ai](https://openrouter.ai) and create a free account
-2. Go to **Keys → Create Key**
-3. Paste it into **"OpenRouter API Key"** in the sidebar
-> Free tier: access to Gemini, Llama 3, Mistral and more
+**OpenRouter:** {or_debug}
 
-You can still use **all ML methods below without any API key** — the AI analysis is only for the goal-understanding step.
+---
+**How to fix:**
+
+🔑 **Get a fresh Gemini key** (takes 2 min, free):
+1. Open [aistudio.google.com](https://aistudio.google.com) in a **private/incognito window**
+2. Sign in with a **different Google account** than before
+3. Click **Get API Key → Create API key**
+4. Paste into **"Gemini API Key"** in the sidebar and press Enter
+
+🔑 **Get a free OpenRouter key** (no card needed):
+1. Go to [openrouter.ai](https://openrouter.ai) → Sign up → **Keys → Create Key**
+2. Paste into **"OpenRouter API Key"** in the sidebar
+
+> All **ML methods below work without any AI key** — only this goal-analysis step needs one.
 """
-    return tips
 
 
 def ask_gemini_multisheet(sheets: dict, user_goal: str) -> str:
@@ -722,6 +740,8 @@ for k, v in {
     "ai_suggestion": "",
     "chosen_method": None,
     "step": 1,
+    "gemini_key": _DEFAULT_GEMINI_KEY,
+    "openrouter_key": "",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -769,30 +789,45 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown('<p class="section-header">🔑 AI API Keys</p>', unsafe_allow_html=True)
-    st.markdown('<p style="color:#8b949e;font-size:0.78rem">Enter at least one key to enable AI goal analysis. All ML methods work without a key.</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p style="color:#8b949e;font-size:0.78rem">'
+        'Enter at least one key to enable AI analysis. '
+        'All ML methods work without a key.</p>',
+        unsafe_allow_html=True,
+    )
 
-    gemini_key_input = st.text_input(
+    # Use key= so Streamlit binds directly to session_state — no value= needed.
+    # Pre-populate session state with defaults BEFORE the widget renders.
+    if "gemini_key" not in st.session_state:
+        st.session_state["gemini_key"] = _DEFAULT_GEMINI_KEY
+    if "openrouter_key" not in st.session_state:
+        st.session_state["openrouter_key"] = ""
+
+    st.text_input(
         "Gemini API Key",
-        value=st.session_state.get("gemini_key", _DEFAULT_GEMINI_KEY),
+        key="gemini_key",          # directly syncs with st.session_state["gemini_key"]
         type="password",
         placeholder="AIzaSy...",
-        help="Get free key at aistudio.google.com",
+        help="Get a free key at aistudio.google.com (15 req/min free tier)",
     )
-    st.session_state["gemini_key"] = gemini_key_input
-
-    or_key_input = st.text_input(
+    st.text_input(
         "OpenRouter API Key (free fallback)",
-        value=st.session_state.get("openrouter_key", ""),
+        key="openrouter_key",      # directly syncs with st.session_state["openrouter_key"]
         type="password",
         placeholder="sk-or-...",
-        help="Free at openrouter.ai — no billing needed",
+        help="100% free at openrouter.ai — no billing or card needed",
     )
-    st.session_state["openrouter_key"] = or_key_input
 
-    if gemini_key_input or or_key_input:
-        st.success("✅ AI key configured")
+    g_set = bool(st.session_state.get("gemini_key", "").strip())
+    o_set = bool(st.session_state.get("openrouter_key", "").strip())
+    if g_set and o_set:
+        st.success("✅ Both keys set (Gemini + OpenRouter fallback)")
+    elif g_set:
+        st.info("🔵 Gemini key set")
+    elif o_set:
+        st.info("🟣 OpenRouter key set")
     else:
-        st.warning("⚠️ No AI key — analysis step disabled")
+        st.warning("⚠️ No AI key — paste one above and press Enter")
 
     st.markdown("---")
     st.markdown('<p style="color:#8b949e;font-size:0.75rem;text-align:center;">DataMine AI · Powered by Gemini + sklearn</p>',
