@@ -1,2692 +1,855 @@
-"""
-═══════════════════════════════════════════════════════════════════════
-  DATA MINING STUDIO  ·  Professional Analytics Platform
-  Ragsdale Ch.10 · Scikit-learn · Streamlit
-═══════════════════════════════════════════════════════════════════════
-"""
-import warnings; warnings.filterwarnings("ignore")
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import json, re
+import io
+import json
+import warnings
+warnings.filterwarnings('ignore')
 
-# ───────────────────────────────────────────────────────────────────
-# GEMINI AI SETUP
-# ───────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = "AIzaSyAo9sIVLVkHQ_yQscblQbsZKstUhr6uNpY"
-_gemini_model = None
-
-def get_gemini():
-    global _gemini_model
-    if _gemini_model is not None:
-        return _gemini_model
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
-        return _gemini_model
-    except Exception:
-        return None
-
-def gemini_json(prompt: str, fallback: dict) -> dict:
-    """Call Gemini and parse JSON response; return fallback on any error."""
-    try:
-        m = get_gemini()
-        if m is None:
-            return fallback
-        resp = m.generate_content(prompt)
-        raw = resp.text.strip()
-        # Strip markdown code fences if present
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-        return json.loads(raw)
-    except Exception:
-        return fallback
-
-def gemini_text(prompt: str, fallback: str = "") -> str:
-    """Call Gemini and return plain text response."""
-    try:
-        m = get_gemini()
-        if m is None:
-            return fallback
-        resp = m.generate_content(prompt)
-        return resp.text.strip()
-    except Exception:
-        return fallback
-
-# ───────────────────────────────────────────────────────────────────
-# PAGE SETUP
-# ───────────────────────────────────────────────────────────────────
+# ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Data Mining Studio",
-    page_icon="◈",
+    page_title="DataMine AI",
+    page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ───────────────────────────────────────────────────────────────────
-# DESIGN SYSTEM
-# ───────────────────────────────────────────────────────────────────
+# ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* ── Fonts ─────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;700&display=swap');
 
-/* deliberately override to Space Grotesk — modern, distinct from generic AI */
-html, body, [class*="css"], .stMarkdown { font-family: 'Space Grotesk', sans-serif !important; }
-code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
+html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
 
-/* ── Tokens ─────────────────────────────────────────────────── */
-:root {
-  --c-bg:      #0d1117;
-  --c-surface: #161b22;
-  --c-border:  #30363d;
-  --c-text:    #f0f6fc;
-  --c-muted:   #b1bac4;
-  --c-accent:  #58a6ff;
-  --c-green:   #3fb950;
-  --c-yellow:  #d29922;
-  --c-red:     #f85149;
-  --c-purple:  #bc8cff;
+.main { background: #0d1117; }
+.stApp { background: linear-gradient(135deg, #0d1117 0%, #161b22 100%); color: #e6edf3; }
+
+h1,h2,h3 { font-family: 'Space Mono', monospace; }
+
+.hero-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 2.8rem;
+    font-weight: 700;
+    background: linear-gradient(90deg, #58a6ff, #bc8cff, #f778ba);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    line-height: 1.2;
+    margin-bottom: 0.3rem;
 }
-
-/* ── Global ─────────────────────────────────────────────────── */
-.stApp { background: #0d1117; color: #f0f6fc; }
-.stApp p, .stApp li, .stApp span, .stApp div { font-size: .95rem !important; }
-.block-container { padding-top: 1.5rem !important; max-width: 1400px; }
-
-/* ── Header ─────────────────────────────────────────────────── */
-.studio-header {
-  display: flex; align-items: center; gap: 1rem;
-  padding: 1.4rem 2rem; border-radius: 12px;
-  background: linear-gradient(135deg, #161b22 0%, #1c2230 50%, #161b22 100%);
-  border: 1px solid #30363d; margin-bottom: 1.2rem;
+.hero-sub {
+    color: #8b949e;
+    font-size: 1.05rem;
+    margin-bottom: 2rem;
 }
-.studio-header .logo { font-size: 2rem; }
-.studio-header h1 { font-size: 1.6rem; font-weight: 700; margin: 0; color: #e6edf3; letter-spacing: -.5px; }
-.studio-header p  { font-size: .8rem; color: #8b949e; margin: .2rem 0 0; }
-
-/* ── Cards ───────────────────────────────────────────────────── */
 .card {
-  background: #161b22; border: 1px solid #30363d;
-  border-radius: 10px; padding: 1.1rem 1.3rem; margin: .5rem 0;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 1.4rem 1.6rem;
+    margin-bottom: 1.2rem;
 }
-.card-accent { border-left: 3px solid #58a6ff; }
-.card-green  { border-left: 3px solid #3fb950; }
-.card-yellow { border-left: 3px solid #d29922; }
-.card-red    { border-left: 3px solid #f85149; }
-.card-purple { border-left: 3px solid #bc8cff; }
+.card-accent {
+    border-left: 4px solid #58a6ff;
+}
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    font-family: 'Space Mono', monospace;
+    margin-right: 4px;
+}
+.badge-blue  { background:#1f3a5f; color:#58a6ff; }
+.badge-purple{ background:#2d1f5f; color:#bc8cff; }
+.badge-pink  { background:#3d1f35; color:#f778ba; }
+.badge-green { background:#1a3a2a; color:#3fb950; }
+.badge-yellow{ background:#3a2d10; color:#d29922; }
 
-/* ── Metric tiles ────────────────────────────────────────────── */
-.metric-tile {
-  background: #161b22; border: 1px solid #30363d;
-  border-radius: 10px; padding: 1rem 1.2rem;
-  transition: border-color .2s;
+.method-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.2s;
 }
-.metric-tile:hover { border-color: #58a6ff; }
-.metric-tile .m-label { font-size: .78rem; color: #b1bac4; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .7px; }
-.metric-tile .m-value { font-size: 1.8rem; font-weight: 700; color: #f0f6fc; line-height: 1.1; }
-.metric-tile .m-sub   { font-size: .82rem; color: #8b949e; margin-top: .2rem; }
-.metric-tile .m-badge {
-  display: inline-block; padding: .15rem .55rem; border-radius: 20px;
-  font-size: .72rem; font-weight: 600; margin-top: .3rem;
-}
-.badge-green  { background: #1a3a1f; color: #3fb950; }
-.badge-yellow { background: #3a2f0a; color: #d29922; }
-.badge-red    { background: #3a0f0f; color: #f85149; }
-.badge-blue   { background: #0d2044; color: #58a6ff; }
+.method-card:hover { border-color: #58a6ff; }
+.method-card.selected { border-color: #58a6ff; background: #1a2332; }
 
-/* ── Steps ───────────────────────────────────────────────────── */
-.step-header {
-  display: flex; align-items: center; gap: .6rem;
-  font-size: 1rem; font-weight: 700; color: #e6edf3;
-  padding: .6rem 0; border-bottom: 1px solid #30363d; margin: 1.2rem 0 .8rem;
+.result-box {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.82rem;
+    color: #8b949e;
 }
-.step-num {
-  background: #58a6ff; color: #0d1117; font-size: .75rem;
-  font-weight: 700; width: 22px; height: 22px;
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
+.ai-bubble {
+    background: linear-gradient(135deg, #1f2d3d, #1a2235);
+    border: 1px solid #58a6ff44;
+    border-radius: 12px;
+    padding: 1.2rem 1.4rem;
+    margin-bottom: 1rem;
 }
-
-/* ── Tag chips ───────────────────────────────────────────────── */
-.tag {
-  display: inline-block; padding: .15rem .55rem; border-radius: 20px;
-  font-size: .73rem; font-weight: 500;
-  background: #161b22; border: 1px solid #30363d; color: #8b949e;
-  margin: .15rem .1rem;
+.section-header {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #58a6ff;
+    margin-bottom: 0.8rem;
+    border-bottom: 1px solid #21262d;
+    padding-bottom: 0.5rem;
 }
-.tag-blue   { background: #0d2044; border-color: #1f4080; color: #58a6ff; }
-.tag-green  { background: #1a3a1f; border-color: #1e5028; color: #3fb950; }
-.tag-yellow { background: #3a2f0a; border-color: #5a4412; color: #d29922; }
-.tag-purple { background: #2d1f4a; border-color: #4a2e8a; color: #bc8cff; }
-
-/* ── Chat bubbles ────────────────────────────────────────────── */
-.bubble-user {
-  background: #1c2230; border: 1px solid #1f4080;
-  border-radius: 10px; padding: .9rem 1.1rem; margin: .5rem 0;
-  font-size: .9rem; line-height: 1.6;
+div[data-testid="stSidebar"] {
+    background: #161b22 !important;
+    border-right: 1px solid #30363d;
 }
-.bubble-sys {
-  background: #161b22; border: 1px solid #30363d;
-  border-radius: 10px; padding: .9rem 1.1rem; margin: .5rem 0;
-  font-size: .93rem; color: #b1bac4; line-height: 1.6;
-}
-.bubble-sys b { color: #58a6ff; }
-.bubble-sys code { background: #0d1117; padding: .1rem .3rem; border-radius: 4px;
-  font-size: .82rem; color: #3fb950; }
-
-/* ── Section divider ─────────────────────────────────────────── */
-.divider {
-  height: 1px; background: linear-gradient(90deg, transparent, #30363d, transparent);
-  margin: 1.2rem 0;
-}
-
-/* ── Ensure white text everywhere ────────────────────────────── */
-p, li, span, div, label, h1, h2, h3, h4, h5, h6 { color: #f0f6fc; }
-
-/* ── Streamlit overrides ─────────────────────────────────────── */
-.stSelectbox>div>div, .stMultiSelect>div>div,
-.stTextInput>div>div, .stTextArea>div>textarea {
-  background: #161b22 !important; border-color: #30363d !important; color: #e6edf3 !important;
-}
-.stSlider .stSlider { color: #58a6ff !important; }
 .stButton>button {
-  background: #21262d; border: 1px solid #30363d; color: #e6edf3;
-  border-radius: 8px; font-weight: 600; transition: all .2s;
+    background: linear-gradient(90deg, #238636, #2ea043);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-family: 'Space Mono', monospace;
+    font-weight: 700;
+    padding: 0.5rem 1.2rem;
+    transition: opacity 0.2s;
 }
-.stButton>button:hover { background: #30363d; border-color: #58a6ff; color: #58a6ff; }
-.stButton>button[kind="primary"] {
-  background: #1f6feb !important; border-color: #1f6feb !important; color: white !important;
+.stButton>button:hover { opacity: 0.85; }
+.stSelectbox label, .stMultiselect label, .stTextArea label {
+    color: #8b949e !important;
+    font-size: 0.85rem !important;
 }
-.stButton>button[kind="primary"]:hover { background: #388bfd !important; }
-.stTabs [data-baseweb="tab-list"] { background: #161b22; border-bottom: 1px solid #30363d; gap: 0; }
-.stTabs [data-baseweb="tab"] {
-  background: transparent; color: #b1bac4; border-radius: 0;
-  padding: .6rem 1.1rem; font-weight: 500; font-size: .92rem;
-}
-.stTabs [aria-selected="true"] { color: #58a6ff !important; border-bottom: 2px solid #58a6ff !important; }
-.stDataFrame { background: #161b22 !important; }
-[data-testid="stSidebar"] { background: #0d1117; border-right: 1px solid #30363d; }
-.stProgress > div > div { background: #1f6feb !important; }
-hr { border-color: #30363d !important; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Imports (lazy to avoid cold-start errors) ─────────────────────────────────
+import google.generativeai as genai
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier, export_text
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.cluster import KMeans, AgglomerativeClustering
+from sklearn.metrics import (accuracy_score, classification_report,
+                             mean_squared_error, r2_score,
+                             silhouette_score, confusion_matrix)
+from mlxtend.frequent_patterns import apriori, association_rules
+from mlxtend.preprocessing import TransactionEncoder
+from imblearn.over_sampling import RandomOverSampler, SMOTE
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
+import seaborn as sns
+from scipy.cluster.hierarchy import dendrogram, linkage
 
-# ───────────────────────────────────────────────────────────────────
-# SESSION STATE
-# ───────────────────────────────────────────────────────────────────
-_DEFAULTS = {
-    "stage": "upload",               # upload → profile → confirm → run → results
-    "sheets": {},                    # {key: df}
-    "profile": {},                   # data profile per sheet
-    "context": {},                   # user answers
-    "plan": {},                      # resolved analysis plan
-    "cfg": {},                       # run configuration
-    "results": {},                   # analysis outputs
-    "pending_rerun": False,
+# ── Gemini setup ──────────────────────────────────────────────────────────────
+GEMINI_KEY = "AIzaSyAo9sIVLVkHQ_yQscblQbsZKstUhr6uNpY"
+genai.configure(api_key=GEMINI_KEY)
+gemini = genai.GenerativeModel("gemini-1.5-flash")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# METHOD CATALOGUE
+# ─────────────────────────────────────────────────────────────────────────────
+METHODS = {
+    # ── Classification ────────────────────────────────────────────────────────
+    "Logistic Regression": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Classifies data into binary or multi-class categories using a probabilistic S-curve. Great starting point for classification tasks.",
+        "vn": "Phân loại cơ bản",
+    },
+    "Linear Discriminant Analysis (LDA)": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Projects data onto axes that maximise class separation. Works best when classes have roughly equal covariance.",
+        "vn": "Phân tích biệt thức",
+    },
+    "K-Nearest Neighbors (KNN)": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Assigns a label based on the majority class among the K closest training samples. Simple and interpretable.",
+        "vn": "Phân loại theo láng giềng",
+    },
+    "Classification Trees": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Builds a human-readable tree of IF-THEN rules to split data into classes. Highly interpretable.",
+        "vn": "Cây quyết định",
+    },
+    "Naive Bayes": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Applies Bayes' theorem with a naive independence assumption. Fast and strong on text and probability problems.",
+        "vn": "Dự báo xác suất",
+    },
+    "Support Vector Machine (SVM)": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Finds the hyperplane with maximum margin between classes. Powerful in high-dimensional spaces.",
+        "vn": "Phân loại biên giới",
+    },
+    "Random Forest": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Ensemble of decision trees trained on random subsets. Robust, accurate, and handles missing values well.",
+        "vn": "Rừng ngẫu nhiên",
+    },
+    "Neural Networks (MLP)": {
+        "group": "classification",
+        "badge": "badge-blue",
+        "desc": "Multi-layer perceptron that can learn complex non-linear patterns. Suitable for large, complex datasets.",
+        "vn": "Mạng nơ-ron",
+    },
+    # ── Prediction ────────────────────────────────────────────────────────────
+    "Linear Regression": {
+        "group": "prediction",
+        "badge": "badge-purple",
+        "desc": "Models the linear relationship between features and a continuous target. Interpretable coefficients show feature impact.",
+        "vn": "Hồi quy tuyến tính",
+    },
+    "Neural Networks Regression (MLP)": {
+        "group": "prediction",
+        "badge": "badge-purple",
+        "desc": "MLP applied to regression tasks — predicts continuous values through stacked non-linear transformations.",
+        "vn": "Mạng nơ-ron hồi quy",
+    },
+    # ── Association / Clustering / Balancing ──────────────────────────────────
+    "Association Rules (Apriori)": {
+        "group": "association",
+        "badge": "badge-pink",
+        "desc": "Discovers IF-THEN patterns in transactional data (e.g. 'customers who buy X also buy Y'). Uses support, confidence, lift.",
+        "vn": "Luật kết hợp / Combo mua hàng",
+    },
+    "K-Means Clustering": {
+        "group": "association",
+        "badge": "badge-green",
+        "desc": "Groups data into K clusters by minimising intra-cluster variance. Good for customer segmentation and anomaly detection.",
+        "vn": "Phân cụm K-Means",
+    },
+    "Hierarchical Clustering": {
+        "group": "association",
+        "badge": "badge-green",
+        "desc": "Builds a dendrogram of nested clusters without specifying K upfront. Helps reveal natural data hierarchy.",
+        "vn": "Phân cụm phân cấp",
+    },
+    "Random Oversampling": {
+        "group": "association",
+        "badge": "badge-yellow",
+        "desc": "Replicates minority-class samples randomly to fix class imbalance before classification.",
+        "vn": "Cân bằng ngẫu nhiên",
+    },
+    "SMOTE": {
+        "group": "association",
+        "badge": "badge-yellow",
+        "desc": "Generates synthetic minority-class samples by interpolating between existing ones, creating richer training data.",
+        "vn": "Cân bằng tổng hợp (SMOTE)",
+    },
 }
-for _k, _v in _DEFAULTS.items():
-    if _k not in st.session_state:
-        st.session_state[_k] = _v
-S = st.session_state
 
+GROUP_META = {
+    "classification": {"label": "Classification", "color": "#58a6ff", "icon": "🔵"},
+    "prediction":     {"label": "Prediction / Regression", "color": "#bc8cff", "icon": "🟣"},
+    "association":    {"label": "Association / Clustering / Balancing", "color": "#f778ba", "icon": "🩷"},
+}
 
-# ───────────────────────────────────────────────────────────────────
-# HEADER
-# ───────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="studio-header">
-  <div class="logo">◈</div>
-  <div>
-    <h1>Data Mining Studio</h1>
-    <p style="color:#8b949e">Professional Analytics Platform — Upload your data and discover patterns</p>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-# ───────────────────────────────────────────────────────────────────
-# SIDEBAR
-# ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### ◈ Navigation")
-
-    # ── User Guide ────────────────────────────────────────────────
-    with st.expander("📘 User Guide — How to use this app", expanded=False):
-        st.markdown("""
-**Welcome to Data Mining Studio!** 👋
-
-This app helps you analyse your data and discover patterns — no coding needed.
-
----
-
-**How it works — 4 simple steps:**
-
-**① Upload your data**
-- Prepare a spreadsheet file (`.csv` or `.xlsx`)
-- Each row should be one record (e.g. one customer, one transaction)
-- Each column should be one piece of information (e.g. Age, City, Purchased)
-- Upload the file and the app will read it automatically
-
-**② Understand your data**
-- The app will scan every column and show you what it found
-- You then describe what the data is about and what you want to learn
-- Tell the app which column you want to predict (the "target")
-
-**③ Configure & Launch**
-- Review the settings the app has chosen for you
-- Adjust if needed (e.g. which models to run, how to handle missing values)
-- Click **Run Analysis** to start
-
-**④ Explore Results**
-- Compare all models side by side in the **Model Comparison** table
-- Dig into charts: Confusion Matrix, ROC curve, Feature Importance
-- Adjust the cutoff threshold to see how it affects predictions
-- Read the **Methodology** tab to understand how each model works
-
----
-
-💡 **Tips for best results:**
-- Make sure your target column has clear labels (e.g. Yes/No, 0/1)
-- More rows = better predictions (aim for 100+ rows)
-- Remove columns that are just ID numbers or dates
-        """)
-
-    st.markdown("---")
-    stages = ["upload","profile","confirm","run","results"]
-    stage_labels = {"upload":"① Upload","profile":"② Understand","confirm":"③ Configure","run":"⏳ Running","results":"④ Results"}
-    current_idx = stages.index(S["stage"]) if S["stage"] in stages else 0
-    for i, (sg, lb) in enumerate(stage_labels.items()):
-        active = sg == S["stage"]
-        done   = i < current_idx
-        color  = "#58a6ff" if active else ("#3fb950" if done else "#30363d")
-        st.markdown(f"""<div style="padding:.35rem .5rem;border-left:2px solid {color};
-        margin:.15rem 0;font-size:.88rem;color:{'#f0f6fc' if active else '#b1bac4'}">{lb}</div>""",
-        unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    if S["stage"] not in ("upload","profile"):
-        st.markdown("---")
-        if st.button("↺ Start over", use_container_width=True):
-            for k in list(S.keys()): del S[k]
-            for k,v in _DEFAULTS.items(): S[k] = v
-            st.rerun()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# PREPROCESSING ENGINE
-# ═══════════════════════════════════════════════════════════════════════════
-
-def profile_dataframe(df: pd.DataFrame) -> dict:
-    """Deep profile of a dataframe — types, missings, cardinality, skew."""
-    p = {}
-    for col in df.columns:
-        s = df[col]
-        n_miss  = int(s.isna().sum())
-        n_uniq  = int(s.nunique(dropna=True))
-        dtype   = str(s.dtype)
-        miss_pct = n_miss / len(s) if len(s) > 0 else 0
-
-        info = {
-            "dtype": dtype,
-            "n_miss": n_miss,
-            "miss_pct": round(miss_pct * 100, 1),
-            "n_uniq": n_uniq,
-            "cardinality": round(n_uniq / max(len(s.dropna()), 1), 3),
-        }
-
-        if pd.api.types.is_numeric_dtype(s):
-            info["kind"] = "numeric"
-            info["min"]  = float(s.min()) if n_uniq > 0 else None
-            info["max"]  = float(s.max()) if n_uniq > 0 else None
-            info["mean"] = float(s.mean()) if n_uniq > 0 else None
-            info["std"]  = float(s.std())  if n_uniq > 1 else 0.0
-            info["skew"] = float(s.skew()) if n_uniq > 2 else 0.0
-            info["binary"] = n_uniq == 2
-        elif pd.api.types.is_bool_dtype(s):
-            info["kind"]   = "boolean"
-            info["binary"] = True
+def load_file(uploaded) -> dict[str, pd.DataFrame]:
+    """Return {sheet_name: DataFrame} for any supported file type."""
+    name = uploaded.name.lower()
+    sheets = {}
+    if name.endswith(".csv"):
+        sheets["Sheet1"] = pd.read_csv(uploaded)
+    elif name.endswith((".xlsx", ".xls")):
+        xf = pd.ExcelFile(uploaded)
+        for s in xf.sheet_names:
+            sheets[s] = xf.parse(s)
+    elif name.endswith(".json"):
+        data = json.load(uploaded)
+        if isinstance(data, list):
+            sheets["Sheet1"] = pd.DataFrame(data)
         else:
-            info["kind"] = "categorical"
-            info["binary"] = n_uniq == 2
-            info["top_values"] = s.value_counts().head(5).to_dict()
-
-            # Detect datetime-like strings
-            try:
-                parsed = pd.to_datetime(s.dropna().head(30), errors="coerce")
-                if parsed.notna().mean() > 0.8:
-                    info["kind"] = "datetime_str"
-            except Exception:
-                pass
-
-        # Encoding suggestion
-        if info["kind"] == "categorical":
-            if n_uniq == 2:
-                info["enc_suggest"] = "label"
-            elif n_uniq <= 8:
-                info["enc_suggest"] = "onehot"
-            elif n_uniq <= 30:
-                info["enc_suggest"] = "target"
-            else:
-                info["enc_suggest"] = "drop"   # too high cardinality (IDs)
-        elif info["kind"] == "datetime_str":
-            info["enc_suggest"] = "drop"
-        else:
-            info["enc_suggest"] = "passthrough"
-
-        p[col] = info
-    return p
-
-
-def suggest_targets(df: pd.DataFrame, profile: dict) -> list:
-    """Return ranked list of candidate target columns."""
-    candidates = []
-    for col, info in profile.items():
-        score = 0
-        reason = []
-        if info["kind"] == "numeric" and info.get("binary"):
-            score += 3; reason.append("binary numeric (0/1)")
-        elif info["kind"] in ("boolean",) or info.get("binary"):
-            score += 3; reason.append("binary column")
-        elif info["kind"] == "categorical" and 2 <= info["n_uniq"] <= 15:
-            score += 2; reason.append(f"categorical ({info['n_uniq']} classes)")
-        elif info["kind"] == "numeric" and info["n_uniq"] > 15:
-            score += 1; reason.append("continuous numeric → regression")
-
-        # Boost for common target names
-        col_l = col.lower()
-        for kw in ["fraud","label","target","class","churn","default","status",
-                   "flag","result","outcome","y","diagnosis","risk","type"]:
-            if kw in col_l:
-                score += 2; reason.append(f"name contains '{kw}'"); break
-
-        # Penalise IDs / timestamps
-        for kw in ["id","key","num","audit","date","time","index","seq"]:
-            if col_l == kw or col_l.endswith(kw) or col_l.startswith(kw):
-                score -= 3; break
-
-        if info["miss_pct"] > 30:
-            score -= 1
-
-        if score > 0:
-            candidates.append({"col": col, "score": score,
-                                "reason": ", ".join(reason), "info": info})
-    candidates.sort(key=lambda x: -x["score"])
-    return candidates
-
-
-def smart_preprocess(df: pd.DataFrame, profile: dict,
-                     target_col: str,
-                     enc_overrides: dict,     # {col: enc_method}
-                     impute_strategy: str,
-                     drop_cols: list,
-                     task: str,
-                     train_idx=None) -> tuple:
-    """
-    Full preprocessing pipeline.
-    train_idx: optional array of training row indices — used to fit target encoding
-               on training rows only, preventing data leakage.
-    Returns (X_df, y_series, feature_names, enc_log, label_maps)
-    """
-    enc_log    = []
-    label_maps = {}     # col → {orig → encoded}
-
-    df2 = df.copy()
-
-    # 1. Drop specified columns
-    drop_actual = [c for c in drop_cols if c in df2.columns and c != target_col]
-    if drop_actual:
-        df2.drop(columns=drop_actual, inplace=True)
-        enc_log.append(f"🗑 Dropped {len(drop_actual)} column(s): {', '.join(f'`{c}`' for c in drop_actual)}")
-
-    # 2. Separate target
-    y_raw = df2.pop(target_col)
-    feature_cols = list(df2.columns)
-
-    # 3. Impute missing values
-    for col in feature_cols:
-        n_miss = df2[col].isna().sum()
-        if n_miss == 0:
-            continue
-        info = profile.get(col, {})
-        if info.get("kind") == "numeric":
-            if impute_strategy == "median":
-                val = df2[col].median()
-            elif impute_strategy == "mean":
-                val = df2[col].mean()
-            else:   # mode
-                val = df2[col].mode().iloc[0] if not df2[col].mode().empty else 0
-            df2[col].fillna(val, inplace=True)
-            enc_log.append(f"🔧 `{col}`: filled {n_miss} missing values with {impute_strategy} ({val:.3g})")
-        else:
-            mode_val = df2[col].mode().iloc[0] if not df2[col].mode().empty else "Unknown"
-            df2[col].fillna(mode_val, inplace=True)
-            enc_log.append(f"🔧 `{col}`: filled {n_miss} missing values with mode ('{mode_val}')")
-
-    # 4. Encode categorical / boolean columns
-    new_cols = []
-    to_drop  = []
-
-    for col in list(df2.columns):
-        info  = profile.get(col, {})
-        enc   = enc_overrides.get(col, info.get("enc_suggest", "passthrough"))
-        kind  = info.get("kind", "numeric")
-
-        if kind == "numeric" or kind == "datetime_str":
-            if kind == "datetime_str":
-                df2.drop(columns=[col], inplace=True, errors="ignore")
-                enc_log.append(f"🗑 `{col}`: dropped (datetime-like)")
-            continue
-
-        if kind in ("categorical", "boolean"):
-            if enc == "drop":
-                to_drop.append(col)
-                enc_log.append(f"🗑 `{col}`: dropped (high-cardinality / ID-like, {info['n_uniq']} unique)")
-
-            elif enc == "label":
-                from sklearn.preprocessing import LabelEncoder
-                le = LabelEncoder()
-                df2[col] = le.fit_transform(df2[col].astype(str))
-                label_maps[col] = dict(zip(le.classes_, le.transform(le.classes_)))
-                enc_log.append(f"🔢 `{col}` → Label Encoding: {dict(list(label_maps[col].items())[:4])}")
-
-            elif enc == "onehot":
-                dummies = pd.get_dummies(df2[col].astype(str), prefix=col, drop_first=True, dtype=int)
-                df2 = pd.concat([df2, dummies], axis=1)
-                new_cols.extend(dummies.columns.tolist())
-                to_drop.append(col)
-                enc_log.append(f"🔠 `{col}` → One-Hot ({dummies.shape[1]} new cols): {list(dummies.columns[:3])}…")
-
-            elif enc == "target" and target_col:
-                # Target encoding — fit only on training rows to avoid leakage
-                if train_idx is not None:
-                    enc_map = y_raw.iloc[train_idx].groupby(df2[col].iloc[train_idx]).mean().to_dict()
-                else:
-                    enc_map = y_raw.groupby(df2[col]).mean().to_dict()
-                df2[col + "_tenc"] = df2[col].map(enc_map).fillna(y_raw.mean())
-                to_drop.append(col)
-                label_maps[col] = enc_map
-                enc_log.append(f"🎯 `{col}` → Target Encoding (fit on train only — leakage-free)")
-
-            elif enc == "ordinal":
-                from sklearn.preprocessing import OrdinalEncoder
-                oe = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1)
-                df2[col] = oe.fit_transform(df2[[col]]).astype(int)
-                enc_log.append(f"📊 `{col}` → Ordinal Encoding")
-
-            else:  # passthrough: try numeric coerce
-                coerced = pd.to_numeric(df2[col], errors="coerce")
-                if coerced.notna().mean() > 0.8:
-                    df2[col] = coerced.fillna(coerced.median())
-                    enc_log.append(f"🔢 `{col}` → coerced to numeric")
-                else:
-                    to_drop.append(col)
-                    enc_log.append(f"🗑 `{col}` → dropped (cannot encode automatically)")
-
-    if to_drop:
-        df2.drop(columns=[c for c in to_drop if c in df2.columns], inplace=True, errors="ignore")
-
-    # 5. Encode target
-    y_enc_log = ""
-    if y_raw.dtype == object or y_raw.dtype.name == "bool" or y_raw.nunique() <= 20:
-        from sklearn.preprocessing import LabelEncoder
-        le_y = LabelEncoder()
-        y_out = pd.Series(le_y.fit_transform(y_raw.astype(str).fillna("missing")),
-                          name=target_col, index=y_raw.index)
-        mapping = dict(zip(le_y.classes_, le_y.transform(le_y.classes_)))
-        label_maps[f"__target__{target_col}"] = mapping
-        y_enc_log = f"🎯 Target `{target_col}` encoded: {mapping}"
+            sheets["Sheet1"] = pd.DataFrame([data])
+    elif name.endswith(".txt"):
+        sheets["Sheet1"] = pd.read_csv(uploaded, sep=None, engine="python")
     else:
-        y_out = y_raw.fillna(y_raw.median()).astype(float)
-        y_out.name = target_col
-
-    if y_enc_log:
-        enc_log.append(y_enc_log)
-
-    # 6. Ensure all numeric
-    for col in list(df2.columns):
-        if not pd.api.types.is_numeric_dtype(df2[col]):
-            df2.drop(columns=[col], inplace=True, errors="ignore")
-
-    df2 = df2.fillna(0)
-    feature_names = list(df2.columns)
-
-    return df2, y_out, feature_names, enc_log, label_maps
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# OVERSAMPLING / BALANCING
-# ═══════════════════════════════════════════════════════════════════════════
-
-def balance_classes(X_arr, y_arr, method: str, seed: int):
-    """balance_method ∈ {none, oversample_random, smote, undersample}"""
-    from collections import Counter
-    counts = Counter(y_arr)
-    log = [f"Class distribution before: {dict(counts)}"]
-
-    if method == "none" or len(counts) < 2:
-        return X_arr, y_arr, log
-
-    if method == "oversample_random":
-        from sklearn.utils import resample
-        classes = list(counts.keys())
-        max_n   = max(counts.values())
-        X_parts, y_parts = [], []
-        for cls in classes:
-            idx = np.where(y_arr == cls)[0]
-            if len(idx) < max_n:
-                idx_up = resample(idx, replace=True, n_samples=max_n, random_state=seed)
-            else:
-                idx_up = idx
-            X_parts.append(X_arr[idx_up])
-            y_parts.append(y_arr[idx_up])
-        X_b = np.vstack(X_parts)
-        y_b = np.concatenate(y_parts)
-        perm = np.random.RandomState(seed).permutation(len(X_b))
-        log.append(f"✅ Random oversampling → {len(X_b)} samples (balanced {max_n} per class)")
-        return X_b[perm], y_b[perm], log
-
-    if method == "smote":
-        try:
-            from imblearn.over_sampling import SMOTE
-            min_cls = min(counts.values())
-            k = max(1, min(5, min_cls - 1))
-            sm = SMOTE(k_neighbors=k, random_state=seed)
-            X_b, y_b = sm.fit_resample(X_arr, y_arr)
-            log.append(f"✅ SMOTE → {len(X_b)} samples")
-            return X_b, y_b, log
-        except Exception as e:
-            log.append(f"⚠️ SMOTE failed ({e}), using random oversample")
-            return balance_classes(X_arr, y_arr, "oversample_random", seed)
-
-    if method == "undersample":
-        min_n = min(counts.values())
-        X_parts, y_parts = [], []
-        for cls in counts:
-            idx = np.where(y_arr == cls)[0]
-            idx_d = np.random.RandomState(seed).choice(idx, min_n, replace=False)
-            X_parts.append(X_arr[idx_d]); y_parts.append(y_arr[idx_d])
-        X_b = np.vstack(X_parts)
-        y_b = np.concatenate(y_parts)
-        perm = np.random.RandomState(seed).permutation(len(X_b))
-        log.append(f"✅ Random undersample → {len(X_b)} samples ({min_n} per class)")
-        return X_b[perm], y_b[perm], log
-
-    return X_arr, y_arr, log
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# MODELS REGISTRY
-# ═══════════════════════════════════════════════════════════════════════════
-
-def build_clf(name: str, params: dict, seed: int):
-    """Build classifier by name with custom params."""
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-    from sklearn.neighbors import KNeighborsClassifier
-    from sklearn.tree import DecisionTreeClassifier
-    from sklearn.naive_bayes import GaussianNB
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.svm import SVC
-    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-
-    registry = {
-        "Logistic Regression": lambda: LogisticRegression(
-            max_iter=params.get("max_iter", 1000),
-            C=params.get("C", 1.0),
-            solver="saga", random_state=seed),
-        "LDA": lambda: LinearDiscriminantAnalysis(
-            solver=params.get("solver", "svd")),
-        "KNN": lambda: KNeighborsClassifier(
-            n_neighbors=params.get("k", 5),
-            weights=params.get("weights", "uniform")),
-        "Decision Tree": lambda: DecisionTreeClassifier(
-            max_depth=params.get("max_depth", 6),
-            min_samples_leaf=params.get("min_samples_leaf", 4),
-            criterion=params.get("criterion", "gini"),
-            random_state=seed),
-        "Naïve Bayes": lambda: GaussianNB(
-            var_smoothing=params.get("var_smoothing", 1e-9)),
-        "Neural Network": lambda: MLPClassifier(
-            hidden_layer_sizes=tuple(params.get("hidden_layers", [64, 32])),
-            activation=params.get("activation", "relu"),
-            alpha=params.get("alpha", 1e-4),
-            max_iter=params.get("max_iter_nn", 500),
-            random_state=seed),
-        "SVM": lambda: SVC(
-            C=params.get("svm_C", 1.0),
-            kernel=params.get("kernel", "rbf"),
-            probability=True, random_state=seed),
-        "Random Forest": lambda: RandomForestClassifier(
-            n_estimators=params.get("n_estimators", 100),
-            max_depth=params.get("rf_max_depth", None),
-            min_samples_leaf=params.get("rf_min_leaf", 3),
-            random_state=seed),
-    }
-    return registry[name]()
-
-
-def build_reg(name: str, params: dict, seed: int):
-    from sklearn.linear_model import LinearRegression, Ridge, Lasso
-    from sklearn.tree import DecisionTreeRegressor
-    from sklearn.neural_network import MLPRegressor
-    from sklearn.ensemble import RandomForestRegressor
-
-    registry = {
-        "Linear Regression": lambda: LinearRegression(),
-        "Ridge": lambda: Ridge(alpha=params.get("ridge_alpha", 1.0)),
-        "Lasso": lambda: Lasso(alpha=params.get("lasso_alpha", 0.1), max_iter=2000),
-        "Decision Tree": lambda: DecisionTreeRegressor(
-            max_depth=params.get("max_depth", 6),
-            min_samples_leaf=params.get("min_samples_leaf", 4),
-            random_state=seed),
-        "Neural Network": lambda: MLPRegressor(
-            hidden_layer_sizes=tuple(params.get("hidden_layers", [64, 32])),
-            activation=params.get("activation", "relu"),
-            alpha=params.get("alpha", 1e-4),
-            max_iter=params.get("max_iter_nn", 500),
-            random_state=seed),
-        "Random Forest": lambda: RandomForestRegressor(
-            n_estimators=params.get("n_estimators", 100),
-            max_depth=params.get("rf_max_depth", None),
-            random_state=seed),
-    }
-    return registry[name]()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TRAINING & EVALUATION
-# ═══════════════════════════════════════════════════════════════════════════
-
-def train_classify(clf, Xtr, ytr, Xval, yval, cutoff: float = 0.5):
-    from sklearn.metrics import (accuracy_score, confusion_matrix,
-                                  f1_score, precision_score, recall_score)
-    clf.fit(Xtr, ytr)
-
-    # Probability-based prediction with custom cutoff (binary only)
-    if hasattr(clf, "predict_proba") and len(np.unique(yval)) == 2:
-        prob_val = clf.predict_proba(Xval)
-        # find index for positive class (class=1 if exists, else last)
-        classes = list(clf.classes_)
-        pos_idx = classes.index(1) if 1 in classes else -1
-        prob_pos = prob_val[:, pos_idx]
-        yp_val = (prob_pos >= cutoff).astype(int)
-        prob_tr = clf.predict_proba(Xtr)[:, pos_idx]
-    else:
-        yp_val  = clf.predict(Xval)
-        prob_pos = None
-        prob_tr  = None
-
-    yp_tr = clf.predict(Xtr)
-    cm    = confusion_matrix(yval, yp_val)
-
-    avg = "binary" if len(np.unique(yval)) == 2 else "weighted"
-    result = {
-        "clf": clf,
-        "train_acc": float(accuracy_score(ytr,  yp_tr)),
-        "val_acc":   float(accuracy_score(yval, yp_val)),
-        "f1":        float(f1_score(yval, yp_val, average=avg, zero_division=0)),
-        "precision": float(precision_score(yval, yp_val, average=avg, zero_division=0)),
-        "recall":    float(recall_score(yval, yp_val, average=avg, zero_division=0)),
-        "cm": cm,
-        "yp_val": yp_val,
-        "prob_pos": prob_pos,
-        "prob_tr":  prob_tr,
-    }
-
-    if cm.size == 4:  # binary
-        tn, fp, fn, tp = cm.ravel()
-        result["sensitivity"] = float(tp/(tp+fn)) if (tp+fn) > 0 else 0.0
-        result["specificity"] = float(tn/(tn+fp)) if (tn+fp) > 0 else 0.0
-    else:
-        result["sensitivity"] = result["recall"]
-        result["specificity"] = 0.0
-
-    return result
-
-
-def train_regress(reg, Xtr, ytr, Xval, yval):
-    from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
-    reg.fit(Xtr, ytr)
-    yp_val = reg.predict(Xval)
-    yp_tr  = reg.predict(Xtr)
-    return {
-        "reg": reg,
-        "train_r2": float(r2_score(ytr, yp_tr)),
-        "val_r2":   float(r2_score(yval, yp_val)),
-        "mae":  float(mean_absolute_error(yval, yp_val)),
-        "rmse": float(np.sqrt(mean_squared_error(yval, yp_val))),
-        "yp_val": yp_val,
-    }
-
-
-def cutoff_sweep(prob_pos, y_true, n_points=80):
-    """Sweep cutoff 0.05 → 0.95, return acc/sens/spec arrays."""
-    cuts = np.linspace(0.05, 0.95, n_points)
-    accs, senss, specs = [], [], []
-    from sklearn.metrics import accuracy_score, confusion_matrix
-    for c in cuts:
-        yp = (prob_pos >= c).astype(int)
-        accs.append(accuracy_score(y_true, yp))
-        cm = confusion_matrix(y_true, yp)
-        if cm.size == 4:
-            tn, fp, fn, tp = cm.ravel()
-            senss.append(tp/(tp+fn) if (tp+fn) > 0 else 0)
-            specs.append(tn/(tn+fp) if (tn+fp) > 0 else 0)
-        else:
-            senss.append(0); specs.append(0)
-    return cuts, accs, senss, specs
-
-
-def feature_importances(result: dict, feat_names: list):
-    clf = result.get("clf") or result.get("reg")
-    if clf is None: return None
-    if hasattr(clf, "feature_importances_"):
-        return pd.Series(clf.feature_importances_, index=feat_names)
-    if hasattr(clf, "coef_"):
-        c = clf.coef_
-        if c.ndim > 1: c = np.abs(c).mean(0)
-        return pd.Series(np.abs(c), index=feat_names)
-    return None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# PLOTLY CHART HELPERS (dark theme)
-# ═══════════════════════════════════════════════════════════════════════════
-
-DARK = dict(
-    paper_bgcolor="#161b22", plot_bgcolor="#161b22",
-    font=dict(family="Space Grotesk", color="#f0f6fc", size=12),
-    title_font=dict(size=14, color="#f0f6fc"),
-    legend=dict(bgcolor="#0d1117", bordercolor="#30363d", borderwidth=1,
-                font=dict(color="#f0f6fc")),
-    xaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", color="#b1bac4",
-               tickfont=dict(color="#b1bac4", size=11)),
-    yaxis=dict(gridcolor="#21262d", zerolinecolor="#30363d", color="#b1bac4",
-               tickfont=dict(color="#b1bac4", size=11)),
-)
-
-
-def dark_fig(fig, height=380):
-    fig.update_layout(**DARK, height=height, margin=dict(l=50,r=30,t=45,b=40))
-    return fig
-
-
-def cm_plotly(cm, title="Confusion Matrix", class_labels=None):
-    if class_labels is None:
-        class_labels = [str(c) for c in range(cm.shape[0])]
-    # Normalise rows for annotation
-    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True).clip(1)
-    annotations = []
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            annotations.append(dict(
-                x=j, y=i,
-                text=f"<b>{cm[i,j]}</b><br><span style='font-size:10px'>{cm_norm[i,j]:.0%}</span>",
-                showarrow=False,
-                font=dict(color="white" if cm_norm[i,j] > 0.5 else "#e6edf3")
-            ))
-    fig = go.Figure(go.Heatmap(
-        z=cm_norm, x=[f"Pred: {l}" for l in class_labels],
-        y=[f"True: {l}" for l in class_labels],
-        colorscale="Blues", showscale=False, zmin=0, zmax=1,
-    ))
-    fig.update_layout(annotations=annotations, title=title)
-    return dark_fig(fig, height=320)
-
-
-def corr_heatmap(df, title="Correlation Matrix"):
-    corr = df.corr()
-    fig = px.imshow(corr, color_continuous_scale="RdBu_r",
-                    zmin=-1, zmax=1, aspect="auto", title=title)
-    fig.update_coloraxes(colorbar_tickfont_color="#8b949e",
-                          colorbar_title_font_color="#8b949e")
-    return dark_fig(fig, height=max(350, 50*len(corr.columns)))
-
-
-def compare_bar(df_metrics: pd.DataFrame, metric: str, title: str, color_col=None):
-    fig = px.bar(df_metrics.sort_values(metric, ascending=True),
-                 x=metric, y="Model", orientation="h",
-                 title=title, text=metric,
-                 color=color_col or metric,
-                 color_continuous_scale="Teal")
-    fig.update_traces(texttemplate="%{text:.1%}", textposition="outside")
-    fig.update_coloraxes(showscale=False)
-    return dark_fig(fig, height=max(280, 45*len(df_metrics)))
-
-
-def cutoff_chart(cuts, accs, senss, specs, opt_cut, title="Cutoff Analysis"):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=cuts, y=accs, name="Accuracy", line=dict(color="#58a6ff", width=2)))
-    fig.add_trace(go.Scatter(x=cuts, y=senss, name="Sensitivity", line=dict(color="#f85149", width=2)))
-    fig.add_trace(go.Scatter(x=cuts, y=specs, name="Specificity", line=dict(color="#3fb950", width=2)))
-    fig.add_vline(x=opt_cut, line_dash="dash", line_color="#d29922",
-                  annotation_text=f"cutoff={opt_cut:.2f}",
-                  annotation_font_color="#d29922")
-    fig.update_layout(title=title, xaxis_title="Cutoff threshold", yaxis_title="Rate",
-                       yaxis_range=[0, 1.05])
-    return dark_fig(fig, height=380)
-
-
-def scatter_avp(y_true, y_pred, title="Actual vs Predicted"):
-    fig = px.scatter(x=y_true, y=y_pred, title=title,
-                     labels={"x": "Actual", "y": "Predicted"},
-                     opacity=0.55, color_discrete_sequence=["#58a6ff"])
-    lo = min(float(min(y_true)), float(min(y_pred)))
-    hi = max(float(max(y_true)), float(max(y_pred)))
-    fig.add_shape(type="line", x0=lo, y0=lo, x1=hi, y1=hi,
-                  line=dict(color="#30363d", dash="dash"))
-    return dark_fig(fig, height=380)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STAGE 0 — UPLOAD
-# ═══════════════════════════════════════════════════════════════════════════
-if S["stage"] == "upload":
-    st.markdown("""
-    <div class="step-header">
-      <div class="step-num">1</div>
-      <span data-vi="Tải lên dữ liệu của bạn (file CSV hoặc Excel)">Upload your data</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col_a, col_b = st.columns([3, 2])
-    with col_a:
-        uploaded = st.file_uploader(
-            "Drop CSV or Excel files here (multiple sheets supported)",
-            type=["csv","xlsx","xls"], accept_multiple_files=True,
-            label_visibility="collapsed"
-        )
-
-    with col_b:
-        st.markdown("""
-        <div class="card card-accent">
-        <div class="tag tag-blue">CSV</div>
-        <div class="tag tag-blue">XLSX</div>
-        <div class="tag tag-green" data-vi="Hỗ trợ nhiều trang tính trong một file Excel">Multi-sheet</div>
-        <div class="tag tag-green" data-vi="Xử lý tự động các loại dữ liệu hỗn hợp">Mixed types</div>
-        <div class="tag tag-purple" data-vi="Hỗ trợ cả cột văn bản và cột số">Text + Numeric</div>
-        <br><br>
-        <span style="color:#8b949e;font-size:.83rem">
-        <span data-vi="Tất cả các loại cột được xử lý tự động: số, phân loại, nhị phân, mã hóa văn bản, ngày giờ">All column types handled automatically:<br>
-        numeric · categorical · binary · text-encoded · datetime</span>
-        </span>
-        </div>
-        """, unsafe_allow_html=True)
-
-    if uploaded:
-        sheets = {}
-        with st.spinner("Reading files…"):
-            for f in uploaded:
-                if f.size > 80_000_000:
-                    st.error(f"⛔ `{f.name}` exceeds 80 MB limit"); continue
-                try:
-                    if f.name.lower().endswith(".csv"):
-                        df = pd.read_csv(f, low_memory=False)
-                        sheets[f.name] = df
-                    else:
-                        xl = pd.read_excel(f, sheet_name=None)
-                        for sname, df in xl.items():
-                            sheets[f"{f.name} › {sname}"] = df
-                except Exception as e:
-                    st.error(f"Error reading `{f.name}`: {e}")
-
-        if sheets:
-            S["sheets"] = sheets
-            # Auto-profile
-            S["profile"] = {k: profile_dataframe(df) for k, df in sheets.items()}
-            S["stage"]   = "profile"
-            st.rerun()
-    else:
-        st.markdown("""
-        <div class="card" style="margin-top:1rem;">
-          <span style="color:#8b949e;font-size:.85rem">
-          No file yet. Once uploaded, the platform will profile every column
-          and ask you what you want to achieve before running any model.
-          </span>
-        </div>
-        """, unsafe_allow_html=True)
-    st.stop()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STAGE 1 — PROFILE + UNDERSTAND
-# ═══════════════════════════════════════════════════════════════════════════
-if S["stage"] == "profile":
-    st.markdown("""
-    <div class="step-header">
-      <div class="step-num">2</div>
-      <span>Understand your data &amp; goals</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Dataset overview ──────────────────────────────────────────
-    tabs_data = st.tabs([f"  {k[:28]}  " for k in S["sheets"].keys()])
-
-    for tab, (sname, df) in zip(tabs_data, S["sheets"].items()):
-        with tab:
-            prof = S["profile"][sname]
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.markdown(f"""<div class="metric-tile"><div class="m-label">Rows</div><div class="m-value">{df.shape[0]:,}</div></div>""", unsafe_allow_html=True)
-            with c2: st.markdown(f"""<div class="metric-tile"><div class="m-label">Columns</div><div class="m-value">{df.shape[1]}</div></div>""", unsafe_allow_html=True)
-            with c3:
-                miss_pct = round(df.isna().sum().sum() / max(df.size, 1) * 100, 1)
-                badge_cls = "badge-green" if miss_pct < 5 else ("badge-yellow" if miss_pct < 20 else "badge-red")
-                st.markdown(f"""<div class="metric-tile"><div class="m-label">Missing</div><div class="m-value">{miss_pct}%</div><div class="m-badge {badge_cls}">{badge_cls.split('-')[1].upper()}</div></div>""", unsafe_allow_html=True)
-            with c4:
-                n_cat = sum(1 for v in prof.values() if v.get("kind") == "categorical")
-                st.markdown(f"""<div class="metric-tile"><div class="m-label">Categorical cols</div><div class="m-value">{n_cat}</div><div class="m-sub">rest: numeric/bool</div></div>""", unsafe_allow_html=True)
-
-            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-            # Column profiler table
-            rows = []
-            for col, info in prof.items():
-                kind_tag = {"numeric":"🔢","categorical":"🔤","boolean":"☑","datetime_str":"📅"}.get(info.get("kind","?"),"❓")
-                enc_sug  = info.get("enc_suggest","—")
-                rows.append({
-                    "Column": col,
-                    "Type": f"{kind_tag} {info.get('kind','?')}",
-                    "Missing": f"{info['miss_pct']}%",
-                    "Unique": info["n_uniq"],
-                    "Encoding suggestion": enc_sug,
-                    "Notes": ("⚠️ high missing" if info["miss_pct"] > 30 else
-                               "🆔 likely ID" if enc_sug == "drop" and info["n_uniq"] > 100 else "")
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, height=280)
-
-            with st.expander("Sample rows (first 5)"):
-                st.dataframe(df.head(), use_container_width=True)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    # ── Goal intake ───────────────────────────────────────────────
-    st.markdown("""
-    <div class="bubble-sys">
-    <b>◈ Studio:</b> Before running any model, tell us what you're trying to achieve.
-    This helps select the right technique, encoding, and evaluation metrics.
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <style>
-    .ctx-label {
-        color: #ffffff !important;
-        font-size: 1.05rem !important;
-        font-weight: 600 !important;
-        margin-bottom: 0.3rem;
-        display: block;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    context = {}
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<span class="ctx-label">📋 What does your data contain?</span>', unsafe_allow_html=True)
-        context["description"] = st.text_area(
-            "What does your data contain?",
-            placeholder="e.g., Survey results (Yes/No answers) from 500 customers about their shopping habits. Each row is one customer.",
-            height=110, key="ctx_desc", label_visibility="collapsed"
-        )
-    with c2:
-        st.markdown('<span class="ctx-label">🎯 What do you want to find out?</span>', unsafe_allow_html=True)
-        context["goal"] = st.text_area(
-            "What do you want to find out?",
-            placeholder="e.g., Predict which customers are likely to buy again, and find out which factors matter most for that prediction.",
-            height=110, key="ctx_goal", label_visibility="collapsed"
-        )
-
-    context["extra"] = st.text_input(
-        "Any specific requirements or constraints? (optional)",
-        placeholder="e.g., Sensitivity is more important than Accuracy. Want to see cutoff sweep. Use seed 12345.",
-        key="ctx_extra"
+        st.error("Unsupported file type.")
+    return sheets
+
+
+def df_summary(df: pd.DataFrame) -> str:
+    buf = io.StringIO()
+    df.info(buf=buf)
+    return (
+        f"Shape: {df.shape}\n"
+        f"Columns: {list(df.columns)}\n"
+        f"Dtypes:\n{df.dtypes.to_string()}\n"
+        f"Null counts:\n{df.isnull().sum().to_string()}\n"
+        f"Sample (3 rows):\n{df.head(3).to_string()}\n"
+        f"Describe:\n{df.describe(include='all').to_string()}"
     )
 
-    # Sheet selection (if multiple)
-    all_sheet_names = list(S["sheets"].keys())
-    if len(all_sheet_names) > 1:
-        context["selected_sheets"] = st.multiselect(
-            "Which sheet(s) to include in the analysis?",
-            all_sheet_names, default=all_sheet_names,
-            key="ctx_sheets"
-        )
+
+def ask_gemini(prompt: str) -> str:
+    try:
+        resp = gemini.generate_content(prompt)
+        return resp.text
+    except Exception as e:
+        return f"⚠️ Gemini error: {e}"
+
+
+def encode_df(df: pd.DataFrame):
+    df = df.copy()
+    le = LabelEncoder()
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = le.fit_transform(df[col].astype(str))
+    return df
+
+
+def fig_to_st(fig):
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ML runners
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_classification(method, df, target, features, test_size, balance):
+    st.markdown('<div class="section-header">⚙️ Training & Evaluation</div>', unsafe_allow_html=True)
+    df_enc = encode_df(df[features + [target]].dropna())
+    X = df_enc[features].values
+    y = df_enc[target].values
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    if balance == "Random Oversampling":
+        X, y = RandomOverSampler(random_state=42).fit_resample(X, y)
+        st.info("✅ Applied Random Oversampling.")
+    elif balance == "SMOTE":
+        try:
+            X, y = SMOTE(random_state=42).fit_resample(X, y)
+            st.info("✅ Applied SMOTE.")
+        except Exception as e:
+            st.warning(f"SMOTE skipped: {e}")
+
+    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42)
+
+    models = {
+        "Logistic Regression": LogisticRegression(max_iter=1000),
+        "Linear Discriminant Analysis (LDA)": LinearDiscriminantAnalysis(),
+        "K-Nearest Neighbors (KNN)": KNeighborsClassifier(),
+        "Classification Trees": DecisionTreeClassifier(max_depth=5),
+        "Naive Bayes": GaussianNB(),
+        "Support Vector Machine (SVM)": SVC(probability=True),
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
+        "Neural Networks (MLP)": MLPClassifier(max_iter=500, random_state=42),
+    }
+    mdl = models[method]
+    mdl.fit(X_tr, y_tr)
+    y_pred = mdl.predict(X_te)
+    acc = accuracy_score(y_te, y_pred)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Accuracy", f"{acc:.2%}")
+        st.text(classification_report(y_te, y_pred))
+    with col2:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        fig.patch.set_facecolor('#0d1117')
+        ax.set_facecolor('#161b22')
+        cm = confusion_matrix(y_te, y_pred)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
+                    linewidths=0.5, linecolor='#30363d')
+        ax.set_title("Confusion Matrix", color='#e6edf3')
+        ax.tick_params(colors='#8b949e')
+        fig_to_st(fig)
+
+    # Feature importance (where available)
+    if hasattr(mdl, "feature_importances_"):
+        fi = pd.Series(mdl.feature_importances_, index=features).sort_values(ascending=False)
+        fig2, ax2 = plt.subplots(figsize=(6, 3))
+        fig2.patch.set_facecolor('#0d1117')
+        ax2.set_facecolor('#161b22')
+        fi.head(15).plot(kind='bar', ax=ax2, color='#58a6ff')
+        ax2.set_title("Feature Importances", color='#e6edf3')
+        ax2.tick_params(colors='#8b949e')
+        plt.tight_layout()
+        fig_to_st(fig2)
+    elif hasattr(mdl, "coef_"):
+        coef = pd.Series(np.abs(mdl.coef_[0]) if mdl.coef_.ndim > 1 else np.abs(mdl.coef_),
+                         index=features).sort_values(ascending=False)
+        fig2, ax2 = plt.subplots(figsize=(6, 3))
+        fig2.patch.set_facecolor('#0d1117')
+        ax2.set_facecolor('#161b22')
+        coef.head(15).plot(kind='bar', ax=ax2, color='#bc8cff')
+        ax2.set_title("Coefficient Magnitudes", color='#e6edf3')
+        ax2.tick_params(colors='#8b949e')
+        plt.tight_layout()
+        fig_to_st(fig2)
+
+    if method == "Classification Trees":
+        st.code(export_text(mdl, feature_names=features, max_depth=4), language="")
+
+
+def run_regression(method, df, target, features, test_size):
+    st.markdown('<div class="section-header">⚙️ Training & Evaluation</div>', unsafe_allow_html=True)
+    df_enc = encode_df(df[features + [target]].dropna())
+    X = df_enc[features].values
+    y = df_enc[target].values
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42)
+
+    if method == "Linear Regression":
+        mdl = LinearRegression()
     else:
-        context["selected_sheets"] = all_sheet_names
+        mdl = MLPRegressor(max_iter=500, random_state=42)
 
-    # Target column
-    # Aggregate suggestions from selected sheets
-    sel_sheets = context.get("selected_sheets") or all_sheet_names
-    all_cols   = list({c for k in sel_sheets for c in S["sheets"].get(k, pd.DataFrame()).columns})
-    all_prof   = {}
-    for k in sel_sheets:
-        all_prof.update(S["profile"].get(k, {}))
-    suggestions = suggest_targets(S["sheets"].get(sel_sheets[0], pd.DataFrame()), S["profile"].get(sel_sheets[0], {}))
+    mdl.fit(X_tr, y_tr)
+    y_pred = mdl.predict(X_te)
+    mse = mean_squared_error(y_te, y_pred)
+    r2 = r2_score(y_te, y_pred)
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    with c1:
-        target_options = ["(auto-detect)"] + all_cols
-        default_target = suggestions[0]["col"] if suggestions else all_cols[0] if all_cols else None
-        default_idx    = target_options.index(default_target) if default_target in target_options else 0
-        context["target"] = st.selectbox(
-            "Target / output column:",
-            target_options, index=default_idx,
-            help="The column to predict (classification) or estimate (regression). For clustering/association, set 'none'."
-        )
-        if suggestions:
-            s = suggestions[0]
-            st.markdown(f"""<div class="card card-accent" style="font-size:.8rem;padding:.6rem .9rem">
-            🎯 <b>Suggested:</b> <code>{s['col']}</code> — {s['reason']}</div>""",
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("R² Score", f"{r2:.4f}")
+        st.metric("RMSE", f"{np.sqrt(mse):.4f}")
+    with col2:
+        fig, ax = plt.subplots(figsize=(5, 4))
+        fig.patch.set_facecolor('#0d1117')
+        ax.set_facecolor('#161b22')
+        ax.scatter(y_te, y_pred, alpha=0.6, color='#58a6ff', edgecolors='none')
+        mn, mx = min(y_te.min(), y_pred.min()), max(y_te.max(), y_pred.max())
+        ax.plot([mn, mx], [mn, mx], 'r--', lw=1.5)
+        ax.set_xlabel("Actual", color='#8b949e')
+        ax.set_ylabel("Predicted", color='#8b949e')
+        ax.set_title("Actual vs Predicted", color='#e6edf3')
+        ax.tick_params(colors='#8b949e')
+        fig_to_st(fig)
+
+    if method == "Linear Regression":
+        coef = pd.Series(mdl.coef_, index=features).sort_values(key=abs, ascending=False)
+        st.subheader("Coefficients")
+        st.dataframe(coef.reset_index().rename(columns={"index": "Feature", 0: "Coefficient"}),
+                     use_container_width=True)
+
+
+def run_association(df, min_support, min_confidence, min_lift):
+    st.markdown('<div class="section-header">⚙️ Association Rules</div>', unsafe_allow_html=True)
+    # Try to detect transaction-style data
+    records = []
+    for _, row in df.iterrows():
+        items = [str(v).strip() for v in row.dropna().values if str(v).strip()]
+        if items:
+            records.append(items)
+
+    if not records:
+        st.error("Could not parse transactional data.")
+        return
+
+    te = TransactionEncoder()
+    te_arr = te.fit_transform(records)
+    df_bool = pd.DataFrame(te_arr, columns=te.columns_)
+    freq = apriori(df_bool, min_support=min_support, use_colnames=True)
+    if freq.empty:
+        st.warning("No frequent itemsets found. Try lowering min support.")
+        return
+    rules = association_rules(freq, metric="lift", min_threshold=min_lift)
+    rules = rules[rules["confidence"] >= min_confidence].sort_values("lift", ascending=False)
+    st.success(f"Found **{len(rules)}** rules from **{len(freq)}** frequent itemsets.")
+
+    st.subheader("Top Rules")
+    display = rules[["antecedents", "consequents", "support", "confidence", "lift"]].head(20).copy()
+    display["antecedents"] = display["antecedents"].apply(lambda x: ", ".join(list(x)))
+    display["consequents"] = display["consequents"].apply(lambda x: ", ".join(list(x)))
+    st.dataframe(display, use_container_width=True)
+
+    if not rules.empty:
+        fig, ax = plt.subplots(figsize=(7, 4))
+        fig.patch.set_facecolor('#0d1117')
+        ax.set_facecolor('#161b22')
+        sc = ax.scatter(rules["support"], rules["confidence"], c=rules["lift"],
+                        cmap="plasma", alpha=0.8, s=60)
+        plt.colorbar(sc, ax=ax, label="Lift")
+        ax.set_xlabel("Support", color='#8b949e')
+        ax.set_ylabel("Confidence", color='#8b949e')
+        ax.set_title("Support vs Confidence (colour = Lift)", color='#e6edf3')
+        ax.tick_params(colors='#8b949e')
+        fig_to_st(fig)
+
+
+def run_clustering(method, df, features, n_clusters):
+    st.markdown('<div class="section-header">⚙️ Clustering</div>', unsafe_allow_html=True)
+    df_enc = encode_df(df[features].dropna())
+    X = StandardScaler().fit_transform(df_enc.values)
+
+    if method == "K-Means Clustering":
+        mdl = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = mdl.fit_predict(X)
+        inertia_vals = []
+        for k in range(2, min(11, len(X))):
+            km = KMeans(n_clusters=k, random_state=42, n_init=10)
+            km.fit(X)
+            inertia_vals.append(km.inertia_)
+        fig, ax = plt.subplots(figsize=(6, 3))
+        fig.patch.set_facecolor('#0d1117')
+        ax.set_facecolor('#161b22')
+        ax.plot(range(2, min(11, len(X))), inertia_vals, 'o-', color='#58a6ff')
+        ax.set_title("Elbow Curve", color='#e6edf3')
+        ax.set_xlabel("K", color='#8b949e')
+        ax.set_ylabel("Inertia", color='#8b949e')
+        ax.tick_params(colors='#8b949e')
+        fig_to_st(fig)
+    else:
+        mdl = AgglomerativeClustering(n_clusters=n_clusters)
+        labels = mdl.fit_predict(X)
+        linked = linkage(X[:min(200, len(X))], method='ward')
+        fig, ax = plt.subplots(figsize=(8, 4))
+        fig.patch.set_facecolor('#0d1117')
+        ax.set_facecolor('#161b22')
+        dendrogram(linked, ax=ax, color_threshold=0,
+                   above_threshold_color='#58a6ff',
+                   leaf_font_size=6)
+        ax.set_title("Dendrogram", color='#e6edf3')
+        ax.tick_params(colors='#8b949e')
+        plt.tight_layout()
+        fig_to_st(fig)
+
+    df_out = df[features].copy()
+    df_out["Cluster"] = labels
+    st.dataframe(df_out.head(30), use_container_width=True)
+
+    try:
+        sil = silhouette_score(X, labels)
+        st.metric("Silhouette Score", f"{sil:.4f}")
+    except Exception:
+        pass
+
+    # 2-D scatter (first 2 features)
+    if len(features) >= 2:
+        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        fig2.patch.set_facecolor('#0d1117')
+        ax2.set_facecolor('#161b22')
+        palette = plt.cm.tab10.colors
+        for c in np.unique(labels):
+            mask = labels == c
+            ax2.scatter(X[mask, 0], X[mask, 1],
+                        color=palette[c % 10], label=f"Cluster {c}", alpha=0.7, s=30)
+        ax2.legend(fontsize=7, labelcolor='#8b949e', facecolor='#161b22')
+        ax2.set_title("Cluster Scatter (first 2 dims)", color='#e6edf3')
+        ax2.tick_params(colors='#8b949e')
+        fig_to_st(fig2)
+
+
+def run_balancing(method, df, target, features):
+    st.markdown('<div class="section-header">⚙️ Class Balancing</div>', unsafe_allow_html=True)
+    df_enc = encode_df(df[features + [target]].dropna())
+    X = df_enc[features].values
+    y = df_enc[target].values
+
+    orig_counts = pd.Series(y).value_counts()
+    if method == "Random Oversampling":
+        Xr, yr = RandomOverSampler(random_state=42).fit_resample(X, y)
+    else:
+        try:
+            Xr, yr = SMOTE(random_state=42).fit_resample(X, y)
+        except Exception as e:
+            st.error(f"SMOTE failed: {e}")
+            return
+    new_counts = pd.Series(yr).value_counts()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Before")
+        st.bar_chart(orig_counts)
+    with col2:
+        st.subheader("After")
+        st.bar_chart(new_counts)
+
+    st.success(f"Samples: {len(y)} → {len(yr)}")
+    st.info("💡 Use the balanced dataset as input to a Classification method above.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SESSION STATE
+# ─────────────────────────────────────────────────────────────────────────────
+for k, v in {
+    "sheets": {},
+    "active_sheet": None,
+    "ai_suggestion": "",
+    "chosen_method": None,
+    "step": 1,
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown('<p class="section-header">📁 Data Upload</p>', unsafe_allow_html=True)
+    uploaded_files = st.file_uploader(
+        "Upload CSV, Excel, JSON, or TXT",
+        accept_multiple_files=True,
+        type=["csv", "xlsx", "xls", "json", "txt"],
+    )
+
+    if uploaded_files:
+        all_sheets = {}
+        for uf in uploaded_files:
+            loaded = load_file(uf)
+            for sh, df in loaded.items():
+                key = f"{uf.name} › {sh}" if len(loaded) > 1 else uf.name
+                all_sheets[key] = df
+        st.session_state["sheets"] = all_sheets
+
+        st.markdown('<p class="section-header">📊 Select Dataset</p>', unsafe_allow_html=True)
+        chosen = st.selectbox("Active dataset", list(all_sheets.keys()))
+        st.session_state["active_sheet"] = chosen
+
+        df_active = all_sheets[chosen]
+        st.markdown(f'<div class="card"><b style="color:#58a6ff">{chosen}</b><br>'
+                    f'<span style="color:#8b949e">{df_active.shape[0]} rows × {df_active.shape[1]} cols</span></div>',
+                    unsafe_allow_html=True)
+
+        if len(all_sheets) > 1:
+            st.markdown('<p class="section-header">🔗 Merge Datasets</p>', unsafe_allow_html=True)
+            merge_on = st.text_input("Common key column (for merge)", "")
+            if st.button("Auto-merge all") and merge_on:
+                merged = None
+                for df in all_sheets.values():
+                    if merge_on in df.columns:
+                        merged = df if merged is None else pd.merge(merged, df, on=merge_on, how="outer")
+                if merged is not None:
+                    st.session_state["sheets"]["🔗 Merged"] = merged
+                    st.success(f"Merged → {merged.shape}")
+
+    st.markdown("---")
+    st.markdown('<p style="color:#8b949e;font-size:0.75rem;text-align:center;">DataMine AI · Powered by Gemini + sklearn</p>',
+                unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN AREA
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown('<div class="hero-title">🧠 DataMine AI</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-sub">Upload your data · Describe your goal · Let AI guide your analysis</div>',
             unsafe_allow_html=True)
 
-    with c2:
-        context["task"] = st.selectbox(
-            "Primary task:",
-            ["(auto-detect)", "Classification", "Regression",
-             "Clustering only", "Association Rules only", "Full analysis"],
-            key="ctx_task"
-        )
-
-    # Check if ready
-    ready = bool(context["description"].strip() or context["goal"].strip())
-
-    if not ready:
-        st.markdown("""<div class="card card-yellow" style="font-size:.83rem">
-        ⚠️ Please describe your data and goal so the studio can configure the analysis correctly.
-        </div>""", unsafe_allow_html=True)
-
-    if st.button("→ Review & Configure", type="primary", disabled=not ready):
-        S["context"] = context
-
-        # ── Gemini Intent Analysis ─────────────────────────────────
-        task = context["task"]
-        tgt  = context["target"]
-        col_list = list({c for k in (context.get("selected_sheets") or all_sheet_names)
-                         for c in S["sheets"].get(k, pd.DataFrame()).columns})
-
-        if task == "(auto-detect)" or tgt == "(auto-detect)":
-            sample_rows = ""
-            first_sheet = (context.get("selected_sheets") or all_sheet_names)[0]
-            df_sample = S["sheets"].get(first_sheet, pd.DataFrame()).head(3)
-            sample_rows = df_sample.to_json(orient="records")
-
-            prompt = f"""You are a data science expert. Analyse the user's intent and dataset.
-
-User Description: {context.get('description','')}
-User Goal: {context.get('goal','')}
-Extra constraints: {context.get('extra','')}
-Available columns: {col_list}
-Sample rows (first 3): {sample_rows}
-
-Return ONLY a valid JSON object with these exact keys:
-{{
-  "task": "<one of: Classification, Regression, Clustering only, Association Rules only, Full analysis>",
-  "target": "<exact column name from the list above, or null if not applicable>",
-  "reasoning": "<one sentence explaining why>",
-  "encoding_hints": {{"column_name": "suggested_encoding"}},
-  "top_features": ["list","of","likely","important","columns","for","the","target"]
-}}
-
-Rules:
-- For fraud/detection/binary outcome tasks → Classification
-- For price/continuous value prediction → Regression
-- For segmentation/grouping tasks → Clustering only
-- For basket/co-occurrence tasks → Association Rules only
-- "target" must be an exact column name from the list, or null
-- Respond ONLY with the JSON object, no other text"""
-
-            with st.spinner("◈ Gemini is analysing your intent…"):
-                fallback_task = "Classification"
-                desc_full = (context["description"] + " " + context["goal"] + " " + context.get("extra","")).lower()
-                if any(k in desc_full for k in ["regress","revenue","price","forecast","continuous"]):
-                    fallback_task = "Regression"
-                elif any(k in desc_full for k in ["cluster","segment","group"]):
-                    fallback_task = "Clustering only"
-
-                fallback_tgt = suggestions[0]["col"] if suggestions else (col_list[0] if col_list else None)
-
-                ai = gemini_json(prompt, {
-                    "task": fallback_task,
-                    "target": fallback_tgt,
-                    "reasoning": "Auto-detected from keywords.",
-                    "encoding_hints": {},
-                    "top_features": []
-                })
-
-            if task == "(auto-detect)":
-                task = ai.get("task", fallback_task)
-                if task not in ["Classification","Regression","Clustering only","Association Rules only","Full analysis"]:
-                    task = fallback_task
-            if tgt == "(auto-detect)":
-                ai_tgt = ai.get("target")
-                tgt = ai_tgt if (ai_tgt and ai_tgt in col_list) else fallback_tgt
-
-            S["context"]["gemini_reasoning"]     = ai.get("reasoning", "")
-            S["context"]["gemini_encoding_hints"] = ai.get("encoding_hints", {})
-            S["context"]["gemini_top_features"]  = ai.get("top_features", [])
-            S["context"]["gemini_used"]          = True
-        else:
-            S["context"]["gemini_used"] = False
-
-        S["context"]["task_resolved"]   = task
-        S["context"]["target_resolved"] = tgt
-        S["stage"] = "confirm"
-        st.rerun()
+if not st.session_state["sheets"]:
+    st.markdown("""
+    <div class="card card-accent">
+    <b style="color:#58a6ff">👋 Welcome!</b><br><br>
+    <ol style="color:#8b949e;line-height:2">
+      <li>Upload one or more data files in the sidebar (CSV, Excel, JSON, TXT).</li>
+      <li>Describe your goal in plain language — the AI will suggest a method.</li>
+      <li>Configure parameters and run the chosen technique.</li>
+      <li>View results, charts, and AI interpretation.</li>
+    </ol>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
+df_active = st.session_state["sheets"][st.session_state["active_sheet"]]
 
-# ═══════════════════════════════════════════════════════════════════════════
-# STAGE 2 — CONFIGURE
-# ═══════════════════════════════════════════════════════════════════════════
-if S["stage"] == "confirm":
-    ctx  = S["context"]
-    task = ctx["task_resolved"]
-    tgt  = ctx.get("target_resolved")
+# ── Step 1 – Data Preview ─────────────────────────────────────────────────────
+with st.expander("🔍 Data Preview & Profile", expanded=False):
+    tab1, tab2, tab3 = st.tabs(["Table", "Statistics", "Column Types"])
+    with tab1:
+        st.dataframe(df_active.head(50), use_container_width=True)
+    with tab2:
+        st.dataframe(df_active.describe(include="all"), use_container_width=True)
+    with tab3:
+        dtypes = df_active.dtypes.reset_index()
+        dtypes.columns = ["Column", "Type"]
+        dtypes["Nulls"] = df_active.isnull().sum().values
+        dtypes["Unique"] = df_active.nunique().values
+        st.dataframe(dtypes, use_container_width=True)
 
-    st.markdown("""
-    <div class="step-header">
-      <div class="step-num">3</div>
-      <span>Configure &amp; Launch</span>
-    </div>
-    """, unsafe_allow_html=True)
+st.divider()
 
-    # Show what was understood
-    gemini_badge = ""
-    if ctx.get("gemini_used"):
-        gemini_badge = f'<span style="background:#1a2f1a;color:#3fb950;border:1px solid #2e5c2e;border-radius:12px;padding:.15rem .6rem;font-size:.75rem;margin-left:.5rem">✨ Gemini AI</span>'
-    reasoning_line = ""
-    if ctx.get("gemini_reasoning"):
-        reasoning_line = f'<br><span style="color:#b1bac4;font-size:.82rem">💡 AI reasoning: {ctx["gemini_reasoning"]}</span>'
+# ── Step 2 – AI Goal Understanding ───────────────────────────────────────────
+st.markdown('<div class="section-header">🤖 Step 1 — Describe Your Goal</div>', unsafe_allow_html=True)
 
-    st.markdown(f"""
-    <div class="bubble-user">
-    <b>You said:</b> {ctx.get('description','')}<br>
-    <b>Goal:</b> {ctx.get('goal','')}<br>
-    {f'<b>Extra:</b> {ctx["extra"]}' if ctx.get("extra") else ""}
-    </div>
-    <div class="bubble-sys">
-    <b>◈ Studio understood:</b>{gemini_badge}<br>
-    Task → <code>{task}</code> &nbsp;|&nbsp; Target → <code>{tgt or 'none'}</code> &nbsp;|&nbsp;
-    Sheets → {", ".join(f"<code>{s}</code>" for s in ctx['selected_sheets'])}
-    {reasoning_line}
-    </div>
-    """, unsafe_allow_html=True)
+user_goal = st.text_area(
+    "What do you want to achieve? (in any language)",
+    placeholder="e.g. 'I want to predict customer churn', 'Find which products are bought together', "
+                "'Segment customers into groups', 'Classify emails as spam or not'…",
+    height=80,
+)
 
-    # ── Sheet info + Analysis Purpose Banner ──────────────────────
-    sel_sheets_info = ctx["selected_sheets"]
-    sheet_rows_html = ""
-    for sname in sel_sheets_info:
-        df_s = S["sheets"].get(sname, pd.DataFrame())
-        sheet_rows_html += f"""
-        <div style="margin:.4rem 0; padding:.6rem 1rem; background:#0d1117; border-radius:8px; border-left:3px solid #58a6ff;">
-          <span style="color:#58a6ff;font-weight:700;font-size:.9rem">📄 Sheet: {sname}</span>
-          <span style="color:#b1bac4;font-size:.82rem;margin-left:1rem">{df_s.shape[0]:,} rows × {df_s.shape[1]} columns</span>
-          <br><span style="color:#8b949e;font-size:.8rem">Columns: {', '.join(df_s.columns[:10].tolist())}{' …' if len(df_s.columns)>10 else ''}</span>
-        </div>"""
+if st.button("🔎 Analyse Goal with AI"):
+    with st.spinner("Gemini is reading your data and goal…"):
+        summary = df_summary(df_active)
+        prompt = f"""
+You are a data mining expert assistant.
 
-    # Multi-sheet combination explanation
-    combination_html = ""
-    if len(sel_sheets_info) > 1:
-        dfs_check = [S["sheets"].get(s, pd.DataFrame()) for s in sel_sheets_info]
-        common_cols_check = set(dfs_check[0].columns)
-        for d in dfs_check[1:]: common_cols_check &= set(d.columns)
-        join_cands = [c for c in common_cols_check if "id" in c.lower() or "audit" in c.lower() or "key" in c.lower()]
-        same_cols = all(set(d.columns) == set(dfs_check[0].columns) for d in dfs_check)
+DATASET SUMMARY:
+{summary}
 
-        if join_cands:
-            join_key = join_cands[0]
-            combination_html = f"""
-            <div style="margin-top:.8rem;padding:.8rem 1rem;background:#1a3a1f;border-radius:8px;border-left:3px solid #3fb950;">
-              <span style="color:#3fb950;font-weight:700">🔗 Multi-Sheet Combination: Horizontal Join (Merge)</span><br>
-              <span style="color:#e6edf3;font-size:.85rem">
-              The sheets share a common key column <code style="color:#58a6ff">{join_key}</code>.
-              They will be joined using an <b>outer merge</b> on this key — meaning each unique audit record
-              gets <b>all features from both sheets side-by-side</b> in one row.
-              Questions from each sheet become separate columns (suffixed if duplicate names exist).
-              This lets classifiers use <b>both question sets simultaneously</b> to predict fraud.
-              The merged dataset then goes through the same train/validation split and balancing pipeline.
-              </span>
-            </div>"""
-        elif same_cols:
-            combination_html = f"""
-            <div style="margin-top:.8rem;padding:.8rem 1rem;background:#3a2f0a;border-radius:8px;border-left:3px solid #d29922;">
-              <span style="color:#d29922;font-weight:700">🔗 Multi-Sheet Combination: Vertical Stack (Concat)</span><br>
-              <span style="color:#e6edf3;font-size:.85rem">
-              The sheets have <b>identical column structures</b>, so they are stacked vertically —
-              all rows from both sheets are combined into one larger dataset.
-              This increases total sample size and gives models more training examples.
-              <b>Note:</b> If the sheets represent different question instruments (e.g. OA vs TML),
-              a horizontal merge (joining by audit ID) is more analytically meaningful than stacking.
-              Consider selecting sheets individually to compare them, or ensuring they share an ID column for merging.
-              </span>
-            </div>"""
-        else:
-            combination_html = f"""
-            <div style="margin-top:.8rem;padding:.8rem 1rem;background:#3a0f0f;border-radius:8px;border-left:3px solid #f85149;">
-              <span style="color:#f85149;font-weight:700">⚠️ Multi-Sheet Combination: First Sheet Used</span><br>
-              <span style="color:#e6edf3;font-size:.85rem">
-              The selected sheets have <b>different column structures and no common key column</b>,
-              so only the first sheet (<code style="color:#58a6ff">{sel_sheets_info[0]}</code>) will be analysed.
-              To combine both sheets, ensure they share a common ID/key column (e.g. an audit number),
-              or run each sheet separately to compare results.
-              </span>
-            </div>"""
+USER GOAL:
+{user_goal}
 
-    # Purpose description
-    purpose_map = {
-        "Classification": "🎯 <b>Purpose:</b> Classify each record into one of the target categories (e.g. Fraud / Non-Fraud) using the question responses as input features. Multiple classification algorithms are trained and compared on training accuracy, validation accuracy, sensitivity, and specificity.",
-        "Regression": "📈 <b>Purpose:</b> Estimate a continuous numeric output from the input features using regression models. Models are compared on R², MAE, and RMSE on a held-out validation set.",
-        "Clustering only": "🔵 <b>Purpose:</b> Group records into clusters based on similarity in their features, without a predefined target. Useful for discovering hidden patterns or segment structures.",
-        "Association Rules only": "🔗 <b>Purpose:</b> Find co-occurrence patterns between feature values (e.g. 'if answer to Q1=Yes then answer to Q3=Yes'). Useful for understanding which question responses tend to appear together.",
-        "Full analysis": "🔬 <b>Purpose:</b> Run the complete suite — Classification, Clustering, and Association Rules — to gain a multi-angle view of the data.",
-    }
-    purpose_txt = purpose_map.get(task, f"🎯 <b>Purpose:</b> {task}")
+Tasks:
+1. Identify the user's analytical purpose (classification, prediction/regression, association rules, clustering, class balancing, or a combination).
+2. List the 2-3 most suitable data mining methods from this list:
+   {list(METHODS.keys())}
+   Give the method name EXACTLY as written, then a brief reason.
+3. Identify the most likely TARGET column (for supervised methods) and the best FEATURE columns.
+4. Point out any data quality issues (missing values, imbalanced classes, wrong types).
+5. Suggest any preprocessing steps.
 
-    st.markdown(f"""
-    <div class="card card-accent" style="margin:.8rem 0">
-      <div style="font-size:.95rem;font-weight:700;color:#58a6ff;margin-bottom:.5rem">📊 Data Sources Being Analysed</div>
-      {sheet_rows_html}
-      {combination_html}
-      <div style="margin-top:.8rem;padding:.6rem 1rem;background:#0d1117;border-radius:8px;font-size:.88rem;color:#e6edf3">
-        {purpose_txt}
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+Respond in the same language the user used. Keep it concise and practical.
+"""
+        st.session_state["ai_suggestion"] = ask_gemini(prompt)
 
-    # ── Work out which sheet + df to use ─────────────────────────
-    sel_sheets = ctx["selected_sheets"]
-    # For multi-sheet same-structure → merge on common col
-    if len(sel_sheets) == 1:
-        work_df   = S["sheets"][sel_sheets[0]].copy()
-        work_prof = S["profile"][sel_sheets[0]]
-    else:
-        # try joining on common index columns
-        dfs = [S["sheets"][s].copy() for s in sel_sheets]
-        common_cols = set(dfs[0].columns)
-        for d in dfs[1:]: common_cols &= set(d.columns)
-        join_candidates = [c for c in common_cols if "id" in c.lower() or "audit" in c.lower() or "key" in c.lower()]
-        if join_candidates:
-            jk = join_candidates[0]
-            merged = dfs[0]
-            for i, d in enumerate(dfs[1:]):
-                suffix = f"_{sel_sheets[i+1].split('›')[-1].strip()[:6]}"
-                merged = merged.merge(d, on=jk, how="outer", suffixes=("", suffix))
-            work_df = merged
-        else:
-            # stack vertically if same columns
-            if all(set(d.columns) == set(dfs[0].columns) for d in dfs):
-                work_df = pd.concat(dfs, ignore_index=True)
-            else:
-                work_df = dfs[0]
-        work_prof = profile_dataframe(work_df)
+if st.session_state["ai_suggestion"]:
+    st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">Gemini AI Analysis</b><br><br>' +
+                st.session_state["ai_suggestion"].replace("\n", "<br>") + "</div>",
+                unsafe_allow_html=True)
 
-    all_cols = list(work_df.columns)
+st.divider()
 
-    # ── Encoding overrides ────────────────────────────────────────
-    gemini_enc_hints = ctx.get("gemini_encoding_hints", {})
-    with st.expander("🔤 Encoding overrides (optional — defaults are auto)", expanded=False):
-        if gemini_enc_hints:
-            hints_text = " &nbsp;|&nbsp; ".join(
-                f"<code>{c}</code> → <code>{v}</code>" for c, v in list(gemini_enc_hints.items())[:8]
+# ── Step 3 – Method Selection ─────────────────────────────────────────────────
+st.markdown('<div class="section-header">🛠️ Step 2 — Choose a Method</div>', unsafe_allow_html=True)
+
+for group_id, gmeta in GROUP_META.items():
+    st.markdown(f"**{gmeta['icon']} {gmeta['label']}**")
+    cols = st.columns(3)
+    methods_in_group = [(n, m) for n, m in METHODS.items() if m["group"] == group_id]
+    for i, (name, meta) in enumerate(methods_in_group):
+        with cols[i % 3]:
+            selected = st.session_state["chosen_method"] == name
+            border = "2px solid #58a6ff" if selected else "1px solid #30363d"
+            st.markdown(
+                f'<div style="background:#161b22;border:{border};border-radius:10px;'
+                f'padding:0.8rem;margin-bottom:0.6rem;">'
+                f'<span class="badge {meta["badge"]}">{group_id.upper()}</span><br>'
+                f'<b style="color:#e6edf3">{name}</b><br>'
+                f'<small style="color:#8b949e">{meta["vn"]}</small><br>'
+                f'<small style="color:#6e7681;font-size:0.75rem">{meta["desc"][:90]}…</small>'
+                f'</div>',
+                unsafe_allow_html=True,
             )
-            st.markdown(f"""<div class="card card-green" style="font-size:.8rem;padding:.5rem .9rem;margin-bottom:.5rem">
-            ✨ <b>Gemini AI suggests:</b> {hints_text}</div>""", unsafe_allow_html=True)
-        enc_overrides = {}
-        enc_opts = ["auto", "passthrough", "label", "onehot", "target", "ordinal", "drop"]
-        cat_cols = [c for c, inf in work_prof.items() if inf.get("kind") in ("categorical","boolean")]
-        if cat_cols:
-            sub_cols = st.columns(min(4, len(cat_cols)))
-            for i, col in enumerate(cat_cols[:12]):
-                with sub_cols[i % len(sub_cols)]:
-                    sug = work_prof[col].get("enc_suggest","auto")
-                    override = st.selectbox(f"`{col}`", enc_opts,
-                                             index=enc_opts.index(sug) if sug in enc_opts else 0,
-                                             key=f"enc_{col}")
-                    if override != "auto":
-                        enc_overrides[col] = override
-        else:
-            st.info("No categorical columns detected — encoding overrides not needed.")
+            if st.button(f"Select", key=f"sel_{name}"):
+                st.session_state["chosen_method"] = name
+                st.rerun()
+    st.markdown("")
 
-    # ── Drop columns ──────────────────────────────────────────────
-    drop_cols = st.multiselect(
-        "Columns to exclude from analysis:",
-        [c for c in all_cols if c != tgt],
-        placeholder="Select columns to drop…",
-        key="drop_cols"
-    )
+st.divider()
 
-    # ── Data split & balancing ────────────────────────────────────
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
+# ── Step 4 – Configure & Run ──────────────────────────────────────────────────
+method = st.session_state["chosen_method"]
+if not method:
+    st.info("👆 Select a method above to configure and run it.")
+    st.stop()
+
+st.markdown(f'<div class="section-header">⚡ Step 3 — Configure & Run: {method}</div>',
+            unsafe_allow_html=True)
+
+meta = METHODS[method]
+st.markdown(f'<div class="card"><span class="badge {meta["badge"]}">{meta["group"].upper()}</span> '
+            f'<b>{method}</b> — {meta["desc"]}</div>', unsafe_allow_html=True)
+
+numeric_cols = df_active.select_dtypes(include=[np.number]).columns.tolist()
+all_cols = df_active.columns.tolist()
+
+group = meta["group"]
+
+# ── Classification & Prediction shared config ────────────────────────────────
+if group in ("classification", "prediction") or method in ("Random Oversampling", "SMOTE"):
+    col_a, col_b = st.columns(2)
+    with col_a:
+        target_col = st.selectbox("🎯 Target column", all_cols)
+    with col_b:
+        feature_cols = st.multiselect(
+            "📐 Feature columns",
+            [c for c in all_cols if c != target_col],
+            default=[c for c in numeric_cols if c != target_col][:8],
+        )
+
+if group == "classification":
+    test_size = st.slider("Test split %", 10, 40, 20) / 100
+    balance_opt = st.selectbox("Class balancing (optional)",
+                               ["None", "Random Oversampling", "SMOTE"])
+elif group == "prediction" and method != "Neural Networks Regression (MLP)":
+    test_size = st.slider("Test split %", 10, 40, 20) / 100
+elif group == "prediction":
+    test_size = st.slider("Test split %", 10, 40, 20) / 100
+
+if method == "Association Rules (Apriori)":
+    c1, c2, c3 = st.columns(3)
+    with c1: min_sup = st.slider("Min Support", 0.01, 0.5, 0.05, 0.01)
+    with c2: min_conf = st.slider("Min Confidence", 0.1, 1.0, 0.3, 0.05)
+    with c3: min_lift = st.slider("Min Lift", 1.0, 10.0, 1.0, 0.1)
+
+if method in ("K-Means Clustering", "Hierarchical Clustering"):
+    c1, c2 = st.columns(2)
     with c1:
-        test_size  = st.slider("Validation set size", 0.15, 0.45, 0.30, 0.05,
-                                help="Fraction held out for validation/testing")
+        feature_cols = st.multiselect("📐 Feature columns", numeric_cols, default=numeric_cols[:6])
     with c2:
-        seed = int(st.number_input("Random seed", value=42, step=1))
-    with c3:
-        impute = st.selectbox("Missing value strategy", ["median","mean","mode"],
-                               help="How to fill numeric missing values")
-    with c4:
-        if task == "Classification" and tgt:
-            balance_method = st.selectbox(
-                "Class balancing",
-                ["none","oversample_random","smote","undersample"],
-                index=1,
-                help="none=off · oversample_random=duplicate minority · smote=synthetic · undersample=trim majority"
-            )
+        n_clusters = st.slider("Number of clusters (K)", 2, 10, 3)
+
+if st.button(f"🚀 Run {method}", type="primary"):
+    if group == "classification" and method not in ("Random Oversampling", "SMOTE"):
+        if not feature_cols:
+            st.error("Select at least one feature column.")
         else:
-            balance_method = "none"
-
-    # ── Model selection ───────────────────────────────────────────
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    if task == "Classification":
-        clf_all = ["LDA","Logistic Regression","KNN","Decision Tree","Naïve Bayes",
-                   "Neural Network","SVM","Random Forest"]
-        selected_models = st.multiselect("Classification models to run:", clf_all,
-                                          default=["LDA","Logistic Regression","Decision Tree",
-                                                   "Naïve Bayes","Neural Network"],
-                                          key="sel_clf")
-    elif task == "Regression":
-        reg_all = ["Linear Regression","Ridge","Lasso","Decision Tree","Neural Network","Random Forest"]
-        selected_models = st.multiselect("Regression models to run:", reg_all,
-                                          default=["Linear Regression","Decision Tree","Neural Network"],
-                                          key="sel_reg")
-    else:
-        selected_models = []
-
-    run_clustering  = task in ("Clustering only","Full analysis") or (task == "Classification" and st.checkbox("Also run K-Means clustering", value=False))
-    run_association = task in ("Association Rules only","Full analysis") or (task != "Clustering only" and st.checkbox("Also run Association Rules", value=False))
-
-    # ── Advanced model params ─────────────────────────────────────
-    with st.expander("⚙️ Model hyperparameters", expanded=False):
-        mcols = st.columns(3)
-        params = {}
-        with mcols[0]:
-            st.markdown("**KNN**")
-            params["k"]       = st.slider("k (neighbors)", 1, 21, 5, 2)
-            params["weights"] = st.selectbox("Weights", ["uniform","distance"])
-        with mcols[1]:
-            st.markdown("**Neural Network**")
-            hl_str = st.text_input("Hidden layers (comma-sep neurons)", "64,32",
-                                    help="e.g. 128,64,32 = three hidden layers")
-            try:
-                params["hidden_layers"] = [int(x.strip()) for x in hl_str.split(",") if x.strip()]
-            except Exception:
-                params["hidden_layers"] = [64, 32]
-            params["activation"]   = st.selectbox("Activation", ["relu","tanh","logistic"])
-            params["max_iter_nn"]  = st.slider("Max epochs", 100, 2000, 500, 100)
-        with mcols[2]:
-            st.markdown("**Decision Tree / RF**")
-            params["max_depth"]       = st.slider("Max depth (0=unlimited)", 0, 20, 6)
-            if params["max_depth"] == 0: params["max_depth"] = None
-            params["min_samples_leaf"]= st.slider("Min samples / leaf", 1, 30, 4)
-            params["n_estimators"]    = st.slider("RF: n trees", 50, 500, 100, 50)
-
-        st.markdown("**Logistic Regression / SVM**")
-        c1p, c2p = st.columns(2)
-        with c1p:
-            params["C"]     = st.select_slider("LR: Regularisation C", [0.001,0.01,0.1,1,10,100], value=1.0)
-        with c2p:
-            params["svm_C"] = st.select_slider("SVM: C", [0.01,0.1,1,10,100], value=1.0)
-            params["kernel"]= st.selectbox("SVM Kernel", ["rbf","linear","poly"])
-
-        if run_clustering:
-            st.markdown("**K-Means**")
-            params["k_clusters"] = st.slider("Number of clusters (K)", 2, 12, 4)
-
-        if run_association:
-            st.markdown("**Apriori**")
-            c1a, c2a = st.columns(2)
-            with c1a: params["min_support"]    = st.slider("Min support",    0.01, 0.30, 0.05, 0.01)
-            with c2a: params["min_confidence"] = st.slider("Min confidence", 0.10, 0.90, 0.30, 0.05)
-
-    # ── Cutoff ────────────────────────────────────────────────────
-    if task == "Classification" and tgt:
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown("""<div class="card card-yellow" style="font-size:.84rem">
-        🎛️ <b>Classification threshold (cutoff):</b>
-        The probability above which a sample is classified as positive.
-        Default 0.5. Lower → more positives detected (higher Sensitivity, more False Positives).
-        Set to <code>auto</code> (0) to sweep all cutoffs and show the trade-off chart.
-        </div>""", unsafe_allow_html=True)
-        cutoff_val = st.slider("Cutoff (0 = show sweep only)", 0.0, 0.95, 0.50, 0.02)
-    else:
-        cutoff_val = 0.5
-
-    # ── Feature selection ─────────────────────────────────────────
-    top_k_feat = st.slider(
-        "Top-K correlated features to use (0 = all)",
-        0, min(40, len(all_cols)), 0,
-        help="Select only K features most correlated with target. 0 = use all."
-    )
-
-    # ── Run ───────────────────────────────────────────────────────
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    if not (selected_models or run_clustering or run_association):
-        st.warning("Select at least one model / analysis type above.")
-        st.stop()
-
-    if st.button("▶  Run Analysis", type="primary", use_container_width=True):
-        S["cfg"] = {
-            "work_df":        work_df,
-            "work_prof":      work_prof,
-            "task":           task,
-            "target":         tgt,
-            "test_size":      test_size,
-            "seed":           seed,
-            "impute":         impute,
-            "balance":        balance_method,
-            "enc_overrides":  enc_overrides,
-            "drop_cols":      drop_cols,
-            "selected_models":selected_models,
-            "run_clustering": run_clustering,
-            "run_association":run_association,
-            "params":         params,
-            "cutoff":         cutoff_val if cutoff_val > 0 else 0.5,
-            "sweep_cutoff":   cutoff_val == 0,
-            "top_k_feat":     top_k_feat,
-        }
-        S["stage"] = "run"
-        st.rerun()
-    st.stop()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STAGE 3 — RUN
-# ═══════════════════════════════════════════════════════════════════════════
-if S["stage"] == "run":
-    cfg = S["cfg"]
-    st.markdown("""
-    <div class="step-header">
-      <div class="step-num">⏳</div> Running analysis…
-    </div>
-    """, unsafe_allow_html=True)
-
-    prog = st.progress(0)
-    log_area = st.empty()
-    log_lines = []
-
-    def log(msg):
-        log_lines.append(msg)
-        log_area.markdown("\n\n".join(log_lines[-8:]))
-
-    from sklearn.model_selection import train_test_split
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import accuracy_score
-
-    R = {}  # results dict
-
-    # ── Pre-split indices for leakage-free target encoding ────────
-    _df_tmp = cfg["work_df"]
-    _tgt_tmp = cfg["target"] if cfg["target"] else list(_df_tmp.columns)[-1]
-    _y_tmp = _df_tmp[_tgt_tmp]
-    try:
-        _train_idx, _val_idx = train_test_split(
-            np.arange(len(_df_tmp)), test_size=cfg["test_size"],
-            random_state=cfg["seed"],
-            stratify=_y_tmp if cfg["task"]=="Classification" and _y_tmp.nunique()<=20 else None
-        )
-    except Exception:
-        _train_idx, _val_idx = train_test_split(
-            np.arange(len(_df_tmp)), test_size=cfg["test_size"], random_state=cfg["seed"])
-
-    # ── Preprocess ────────────────────────────────────────────────
-    log("🔧 Preprocessing data…")
-    prog.progress(5)
-
-    X_df, y_ser, feat_names, enc_log, label_maps = smart_preprocess(
-        cfg["work_df"], cfg["work_prof"],
-        cfg["target"] if cfg["target"] else list(cfg["work_df"].columns)[-1],
-        cfg["enc_overrides"], cfg["impute"],
-        cfg["drop_cols"], cfg["task"],
-        train_idx=_train_idx
-    )
-
-    R["enc_log"]    = enc_log
-    R["label_maps"] = label_maps
-    R["feat_names"] = feat_names
-    R["X_df"]       = X_df
-    R["y_ser"]      = y_ser
-
-    for line in enc_log:
-        log(line)
-
-    # ── Feature selection ─────────────────────────────────────────
-    prog.progress(12)
-    top_k = cfg["top_k_feat"]
-    if top_k > 0 and len(feat_names) > top_k:
-        log(f"🔑 Selecting top-{top_k} features by correlation…")
-        corr_with_y = X_df.corrwith(y_ser.astype(float)).abs().sort_values(ascending=False)
-        selected_feats = list(corr_with_y.head(top_k).index)
-        X_df = X_df[selected_feats]
-        feat_names = selected_feats
-        R["feat_names"] = feat_names
-        R["corr_with_y"] = corr_with_y
-        log(f"   Selected: {selected_feats[:6]}{'…' if len(selected_feats)>6 else ''}")
-    else:
-        R["corr_with_y"] = X_df.corrwith(y_ser.astype(float)).abs().sort_values(ascending=False)
-
-    # ── Train / Val split ─────────────────────────────────────────
-    prog.progress(18)
-    X_arr = X_df.values.astype(float)
-    y_arr = y_ser.values
-
-    try:
-        Xtr_r, Xval, ytr_r, yval = train_test_split(
-            X_arr, y_arr, test_size=cfg["test_size"],
-            random_state=cfg["seed"],
-            stratify=y_arr if cfg["task"]=="Classification" and len(np.unique(y_arr))<=20 else None
-        )
-    except Exception:
-        Xtr_r, Xval, ytr_r, yval = train_test_split(
-            X_arr, y_arr, test_size=cfg["test_size"], random_state=cfg["seed"])
-
-    R["Xval"] = Xval; R["yval"] = yval
-    R["Xtr_raw"] = Xtr_r; R["ytr_raw"] = ytr_r
-    log(f"✂ Train: {len(Xtr_r):,}  Validation: {len(Xval):,}  Features: {len(feat_names)}")
-
-    # ── Balance ───────────────────────────────────────────────────
-    prog.progress(22)
-    Xtr, ytr, bal_log = balance_classes(Xtr_r, ytr_r, cfg["balance"], cfg["seed"])
-    R["bal_log"] = bal_log
-    for l in bal_log: log(l)
-
-    # ── Scale ─────────────────────────────────────────────────────
-    sc = StandardScaler()
-    Xtr_s  = sc.fit_transform(Xtr)
-    Xval_s = sc.transform(Xval)
-    R["scaler"] = sc
-
-    # ── Classification models ─────────────────────────────────────
-    clf_results = {}
-    if cfg["task"] == "Classification" and cfg["selected_models"]:
-        n_models = len(cfg["selected_models"])
-        for i, mname in enumerate(cfg["selected_models"]):
-            prog.progress(25 + int(40 * i / n_models))
-            log(f"🤖 Training {mname}…")
-            # KNN & Neural Network & SVM use scaled data
-            use_scaled = mname in ("KNN","Neural Network","SVM","Logistic Regression","LDA")
-            Xt = Xtr_s if use_scaled else Xtr
-            Xv = Xval_s if use_scaled else Xval
-            try:
-                clf = build_clf(mname, cfg["params"], cfg["seed"])
-
-                # KNN: find best k if not locked
-                if mname == "KNN":
-                    best_k_acc = -1; best_k = cfg["params"].get("k",5)
-                    for k_try in [3,5,7,9,11,15]:
-                        from sklearn.neighbors import KNeighborsClassifier
-                        tmp = KNeighborsClassifier(n_neighbors=k_try,
-                                                    weights=cfg["params"].get("weights","uniform"))
-                        tmp.fit(Xt, ytr)
-                        acc = accuracy_score(yval, tmp.predict(Xv))
-                        if acc > best_k_acc:
-                            best_k_acc = acc; best_k = k_try
-                    cfg["params"]["k"] = best_k
-                    clf = build_clf("KNN", cfg["params"], cfg["seed"])
-                    log(f"   KNN best k={best_k} (val acc={best_k_acc:.1%})")
-
-                res = train_classify(clf, Xt, ytr, Xv, yval, cfg["cutoff"])
-                clf_results[mname] = res
-                log(f"   {mname}: val_acc={res['val_acc']:.1%}  sensitivity={res.get('sensitivity',0):.1%}")
-            except Exception as e:
-                log(f"   ⚠️ {mname} failed: {e}")
-
-        R["clf_results"] = clf_results
-
-    # ── Regression models ─────────────────────────────────────────
-    reg_results = {}
-    if cfg["task"] == "Regression" and cfg["selected_models"]:
-        n_models = len(cfg["selected_models"])
-        for i, mname in enumerate(cfg["selected_models"]):
-            prog.progress(25 + int(40 * i / n_models))
-            log(f"📈 Training {mname}…")
-            use_scaled = mname in ("Neural Network","Logistic Regression","Ridge","Lasso","SVM")
-            Xt = Xtr_s if use_scaled else Xtr
-            Xv = Xval_s if use_scaled else Xval
-            try:
-                reg = build_reg(mname, cfg["params"], cfg["seed"])
-                res = train_regress(reg, Xt, ytr.astype(float), Xv, yval.astype(float))
-                reg_results[mname] = res
-                log(f"   {mname}: R²={res['val_r2']:.3f}  MAE={res['mae']:.4g}")
-            except Exception as e:
-                log(f"   ⚠️ {mname} failed: {e}")
-        R["reg_results"] = reg_results
-
-    # ── Cutoff sweep ──────────────────────────────────────────────
-    prog.progress(68)
-    if cfg.get("sweep_cutoff") and clf_results:
-        log("📈 Running cutoff sweep on best LR / Logistic model…")
-        # Use logistic if available, else best model with proba
-        sweep_model = clf_results.get("Logistic Regression") or next(
-            (v for v in clf_results.values() if v.get("prob_pos") is not None), None)
-        if sweep_model and sweep_model.get("prob_pos") is not None:
-            cuts, accs, senss, specs = cutoff_sweep(sweep_model["prob_pos"], yval)
-            R["cutoff_sweep"] = {"cuts": cuts, "accs": accs, "senss": senss, "specs": specs}
-
-    # ── Clustering ────────────────────────────────────────────────
-    prog.progress(72)
-    if cfg["run_clustering"]:
-        log("🔵 Running K-Means clustering…")
-        try:
-            from sklearn.cluster import KMeans
-            k = cfg["params"].get("k_clusters", 4)
-            km = KMeans(n_clusters=k, random_state=cfg["seed"], n_init=10)
-            sc2 = StandardScaler()
-            X_cl = sc2.fit_transform(X_arr[:min(5000, len(X_arr))])
-            labels = km.fit_predict(X_cl)
-            R["cluster_labels"]   = labels
-            R["cluster_centers"]  = pd.DataFrame(
-                sc2.inverse_transform(km.cluster_centers_), columns=feat_names)
-            R["cluster_data"]     = pd.DataFrame(X_arr[:min(5000, len(X_arr))], columns=feat_names)
-            R["cluster_data"]["Cluster"] = labels.astype(str)
-            R["cluster_inertia"]  = float(km.inertia_)
-            log(f"   K-Means (k={k}): inertia={km.inertia_:.2f}")
-
-            # Elbow (quick)
-            ks   = list(range(2, min(11, len(np.unique(y_arr))+5)))
-            ines = []
-            for ki in ks:
-                km_i = KMeans(n_clusters=ki, random_state=cfg["seed"], n_init=5).fit(X_cl)
-                ines.append(km_i.inertia_)
-            R["elbow"] = {"ks": ks, "inertia": ines}
-        except Exception as e:
-            log(f"   ⚠️ Clustering failed: {e}")
-
-    # ── Association Rules ─────────────────────────────────────────
-    prog.progress(82)
-    if cfg["run_association"]:
-        log("🔗 Running Apriori association rules…")
-        try:
-            from mlxtend.frequent_patterns import apriori, association_rules
-            from mlxtend.preprocessing import TransactionEncoder
-
-            # Use categorical / binary columns from original df
-            orig_df = cfg["work_df"].copy()
-            cat_cols = [c for c, inf in cfg["work_prof"].items()
-                        if inf.get("kind") in ("categorical","boolean") and inf["n_uniq"] <= 30
-                        and c != cfg["target"]][:12]
-
-            if cat_cols:
-                transactions = orig_df[cat_cols].astype(str).values.tolist()
-                te = TransactionEncoder()
-                arr = te.fit_transform(transactions)
-                df_te = pd.DataFrame(arr, columns=te.columns_)
-                freq = apriori(df_te, min_support=cfg["params"]["min_support"], use_colnames=True)
-                if not freq.empty:
-                    rules = association_rules(freq, metric="confidence",
-                                               min_threshold=cfg["params"]["min_confidence"])
-                    rules = rules.sort_values("lift", ascending=False)
-                    R["assoc_rules"] = rules
-                    log(f"   Found {len(rules)} rules (min_support={cfg['params']['min_support']:.2f})")
-                else:
-                    log("   No frequent itemsets at current min_support — try lowering it")
-            else:
-                log("   No suitable categorical columns for association rules")
-        except Exception as e:
-            log(f"   ⚠️ Association rules failed: {e}")
-
-    prog.progress(95)
-    log("✅ All analyses complete.")
-    prog.progress(100)
-
-    S["results"] = R
-    S["stage"]   = "results"
-    import time; time.sleep(0.4)
-    st.rerun()
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STAGE 4 — RESULTS
-# ═══════════════════════════════════════════════════════════════════════════
-if S["stage"] == "results":
-    R   = S["results"]
-    cfg = S["cfg"]
-    ctx = S["context"]
-
-    st.markdown("""
-    <div class="step-header">
-      <div class="step-num">4</div> Results & Insights
-    </div>
-    """, unsafe_allow_html=True)
-
-    task = cfg["task"]
-    tgt  = cfg["target"]
-
-    # ── Top KPIs ──────────────────────────────────────────────────
-    kpi_cols = st.columns(5)
-
-    clf_res = R.get("clf_results", {})
-    reg_res = R.get("reg_results", {})
-
-    if clf_res:
-        best_clf = max(clf_res, key=lambda m: clf_res[m]["val_acc"])
-        br       = clf_res[best_clf]
-        kpi_cols[0].markdown(f"""<div class="metric-tile"><div class="m-label">Best model</div><div class="m-value" style="font-size:1.05rem">{best_clf}</div><div class="m-badge badge-blue">Accuracy {br['val_acc']:.1%}</div></div>""", unsafe_allow_html=True)
-        kpi_cols[1].markdown(f"""<div class="metric-tile"><div class="m-label">Sensitivity</div><div class="m-value">{br.get('sensitivity',0):.1%}</div><div class="m-sub">TP/(TP+FN)</div></div>""", unsafe_allow_html=True)
-        kpi_cols[2].markdown(f"""<div class="metric-tile"><div class="m-label">Specificity</div><div class="m-value">{br.get('specificity',0):.1%}</div><div class="m-sub">TN/(TN+FP)</div></div>""", unsafe_allow_html=True)
-        kpi_cols[3].markdown(f"""<div class="metric-tile"><div class="m-label">F1-Score</div><div class="m-value">{br['f1']:.3f}</div><div class="m-sub">harmonic mean</div></div>""", unsafe_allow_html=True)
-        kpi_cols[4].markdown(f"""<div class="metric-tile"><div class="m-label">Models trained</div><div class="m-value">{len(clf_res)}</div><div class="m-sub">val cutoff={cfg['cutoff']:.2f}</div></div>""", unsafe_allow_html=True)
-
-    elif reg_res:
-        best_reg = max(reg_res, key=lambda m: reg_res[m]["val_r2"])
-        br_r     = reg_res[best_reg]
-        kpi_cols[0].markdown(f"""<div class="metric-tile"><div class="m-label">Best model</div><div class="m-value" style="font-size:1rem">{best_reg}</div></div>""", unsafe_allow_html=True)
-        kpi_cols[1].markdown(f"""<div class="metric-tile"><div class="m-label">R²</div><div class="m-value">{br_r['val_r2']:.4f}</div><div class="m-sub">variance explained</div></div>""", unsafe_allow_html=True)
-        kpi_cols[2].markdown(f"""<div class="metric-tile"><div class="m-label">MAE</div><div class="m-value">{br_r['mae']:.4g}</div></div>""", unsafe_allow_html=True)
-        kpi_cols[3].markdown(f"""<div class="metric-tile"><div class="m-label">RMSE</div><div class="m-value">{br_r['rmse']:.4g}</div></div>""", unsafe_allow_html=True)
-        kpi_cols[4].markdown(f"""<div class="metric-tile"><div class="m-label">Models</div><div class="m-value">{len(reg_res)}</div></div>""", unsafe_allow_html=True)
-
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-    # ── Main tabs ─────────────────────────────────────────────────
-    tab_names = []
-    if clf_res: tab_names += ["📊 Model Comparison","🎯 Confusion Matrix","📈 Cutoff Analysis","🔑 Feature Importance"]
-    if reg_res: tab_names += ["📈 Regression Results","🔑 Feature Importance"]
-    if R.get("cluster_labels") is not None: tab_names.append("🔵 Clustering")
-    if R.get("assoc_rules") is not None:    tab_names.append("🔗 Association Rules")
-    tab_names += ["🧬 Data Profile","⚙️ Pipeline Log","🗺️ Methodology","💡 Conclusions & Recommendations"]
-
-    tabs = st.tabs(tab_names)
-    tab_idx = 0
-
-    # ── Tab: Model Comparison ─────────────────────────────────────
-    if clf_res:
-        with tabs[tab_idx]:
-            tab_idx += 1
-            rows = []
-            for mname, res in clf_res.items():
-                rows.append({
-                    "Model":         mname,
-                    "Train Acc":     res["train_acc"],
-                    "Val Accuracy":  res["val_acc"],
-                    "Sensitivity":   res.get("sensitivity",0),
-                    "Specificity":   res.get("specificity",0),
-                    "F1":            res["f1"],
-                    "Precision":     res["precision"],
-                })
-            df_cmp = pd.DataFrame(rows).sort_values("Val Accuracy", ascending=False)
-
-            # comparison bars
-            fcols = st.columns(2)
-            with fcols[0]:
-                st.plotly_chart(compare_bar(df_cmp.rename(columns={"Val Accuracy":"Val Acc","Model":"Model"}),
-                                             "Val Acc", "Validation Accuracy"),
-                                use_container_width=True)
-            with fcols[1]:
-                st.plotly_chart(compare_bar(df_cmp.rename(columns={"Model":"Model"}),
-                                             "Sensitivity", "Sensitivity (recall for positive class)"),
-                                use_container_width=True)
-
-            # Overfitting indicator
-            df_cmp["Overfit Gap"] = df_cmp["Train Acc"] - df_cmp["Val Accuracy"]
-            df_cmp["Overfit?"]    = df_cmp["Overfit Gap"].apply(
-                lambda x: "⚠️ High" if x > 0.12 else ("✓ Moderate" if x > 0.05 else "✅ Low"))
-
-            # Banner warning for suspicious perfect/near-perfect scores
-            suspicious = df_cmp[df_cmp["Val Accuracy"] >= 0.99]
-            if len(suspicious) > 0:
-                models_list = ", ".join(suspicious["Model"].tolist())
-                st.markdown(f"""<div class="card card-yellow" style="font-size:.88rem;margin:.6rem 0">
-                ⚠️ <b>Suspicious accuracy alert:</b> {models_list} scored ≥99% on validation.
-                This often indicates the dataset is very simple/small, the target leaks from a feature,
-                or the same data was used for training and validation.
-                Check the <b>Overfit?</b> column — a low gap alongside 100% usually means the task is trivially easy,
-                not that the model is truly powerful. Consider using a held-out test set.
-                </div>""", unsafe_allow_html=True)
-
-            high_overfit = df_cmp[df_cmp["Overfit Gap"] > 0.12]
-            if len(high_overfit) > 0:
-                models_list2 = ", ".join(high_overfit["Model"].tolist())
-                st.markdown(f"""<div class="card card-red" style="font-size:.88rem;margin:.4rem 0">
-                🔴 <b>Overfitting detected:</b> {models_list2} show a Train vs Val gap &gt;12%.
-                Consider limiting tree depth, increasing regularisation, or adding more training data.
-                </div>""", unsafe_allow_html=True)
-
-            st.dataframe(
-                df_cmp[["Model","Train Acc","Val Accuracy","Sensitivity","Specificity","F1","Precision","Overfit?"]].style
-                .format({"Train Acc":"{:.1%}","Val Accuracy":"{:.1%}","Sensitivity":"{:.1%}",
-                          "Specificity":"{:.1%}","F1":"{:.3f}","Precision":"{:.1%}"})
-                .background_gradient(subset=["Val Accuracy","Sensitivity"], cmap="Blues"),
-                use_container_width=True,
-                hide_index=True
-            )
-
-            # Interactive: select model and show detail
-            sel_model = st.selectbox("Inspect model:", list(clf_res.keys()), key="inspect_model")
-            sel_res   = clf_res[sel_model]
-
-            # Train vs Val bar chart
-            fig_tv = go.Figure([
-                go.Bar(name="Train", x=[sel_model], y=[sel_res["train_acc"]],
-                       marker_color="#58a6ff"),
-                go.Bar(name="Val",   x=[sel_model], y=[sel_res["val_acc"]],
-                       marker_color="#3fb950"),
-            ])
-            fig_tv.update_layout(barmode="group", title=f"{sel_model}: Train vs Validation",
-                                  yaxis_range=[0,1.05])
-            st.plotly_chart(dark_fig(fig_tv, 300), use_container_width=True)
-
-        # ── Tab: Confusion Matrix ────────────────────────────────
-        with tabs[tab_idx]:
-            tab_idx += 1
-            sel_cm = st.selectbox("Model:", list(clf_res.keys()), key="cm_model")
-            res_cm = clf_res[sel_cm]
-            cm     = res_cm["cm"]
-            n_cls  = cm.shape[0]
-
-            # Class labels from label map
-            target_map = R["label_maps"].get(f"__target__{tgt}", {})
-            if target_map:
-                inv_map = {v: k for k, v in target_map.items()}
-                class_labels = [str(inv_map.get(i, i)) for i in range(n_cls)]
-            else:
-                class_labels = [str(i) for i in range(n_cls)]
-
-            c1, c2 = st.columns([3,2])
-            with c1:
-                st.plotly_chart(cm_plotly(cm, f"Confusion Matrix — {sel_cm}", class_labels),
-                                use_container_width=True)
-            with c2:
-                st.markdown(f"""
-                <div class="card card-accent">
-                <div class="tag tag-blue" data-vi="Độ nhạy: tỷ lệ phát hiện đúng các trường hợp dương tính">Sensitivity</div><br>
-                <b style="font-size:1.5rem">{res_cm.get('sensitivity',0):.1%}</b>
-                <p style="color:#8b949e;font-size:.82rem"><span data-vi="TP/(TP+FN): tỷ lệ trường hợp dương tính thực tế được nhận dạng đúng">TP/(TP+FN) — share of actual positives correctly identified</span></p>
-                </div>
-                <div class="card card-green" style="margin-top:.5rem">
-                <div class="tag tag-green" data-vi="Độ đặc hiệu: tỷ lệ nhận dạng đúng các trường hợp âm tính">Specificity</div><br>
-                <b style="font-size:1.5rem">{res_cm.get('specificity',0):.1%}</b>
-                <p style="color:#8b949e;font-size:.82rem"><span data-vi="TN/(TN+FP): tỷ lệ trường hợp âm tính thực tế được nhận dạng đúng">TN/(TN+FP) — share of actual negatives correctly identified</span></p>
-                </div>
-                <div class="card card-yellow" style="margin-top:.5rem">
-                <div class="tag tag-yellow" data-vi="Điểm F1: trung bình điều hòa giữa Độ chính xác và Độ nhớ lại">F1 Score</div><br>
-                <b style="font-size:1.5rem">{res_cm['f1']:.3f}</b>
-                <p style="color:#8b949e;font-size:.82rem"><span data-vi="Trung bình điều hòa của Precision (độ chính xác) và Recall (độ nhớ lại)">Harmonic mean of Precision and Recall</span></p>
-                </div>
-                """, unsafe_allow_html=True)
-
-        # ── Tab: Cutoff Analysis ─────────────────────────────────
-        with tabs[tab_idx]:
-            tab_idx += 1
-            # Interactive cutoff slider
-            st.markdown("""<div class="card card-yellow" style="font-size:.84rem">
-            Change the cutoff to explore the Sensitivity / Specificity trade-off in real time.
-            Lower cutoff → higher Sensitivity (catch more positives) but more False Positives.
-            </div>""", unsafe_allow_html=True)
-
-            live_cutoff = st.slider("Live cutoff", 0.05, 0.95,
-                                     cfg["cutoff"], 0.02, key="live_co")
-
-            # Recompute metrics at live cutoff
-            live_rows = []
-            for mname, res in clf_res.items():
-                if res.get("prob_pos") is not None:
-                    from sklearn.metrics import accuracy_score, confusion_matrix
-                    yp_live = (res["prob_pos"] >= live_cutoff).astype(int)
-                    acc_l   = accuracy_score(R["yval"], yp_live)
-                    cm_l    = confusion_matrix(R["yval"], yp_live)
-                    if cm_l.size == 4:
-                        tn,fp,fn,tp = cm_l.ravel()
-                        sens_l = tp/(tp+fn) if (tp+fn)>0 else 0
-                        spec_l = tn/(tn+fp) if (tn+fp)>0 else 0
-                    else:
-                        sens_l = spec_l = 0
-                    live_rows.append({"Model":mname, "Accuracy":acc_l,
-                                       "Sensitivity":sens_l,"Specificity":spec_l})
-
-            if live_rows:
-                df_live = pd.DataFrame(live_rows).sort_values("Accuracy", ascending=False)
-                st.dataframe(df_live.style.format({
-                    "Accuracy":"{:.1%}","Sensitivity":"{:.1%}","Specificity":"{:.1%}"
-                }).background_gradient(subset=["Sensitivity"], cmap="RdYlGn"),
-                use_container_width=True)
-
-            if R.get("cutoff_sweep"):
-                sw = R["cutoff_sweep"]
-                # Find optimal cutoff per criterion
-                opt_acc_idx  = int(np.argmax(sw["accs"]))
-                opt_sens_idx = int(np.argmax(sw["senss"]))
-                opt_f1_idx   = int(np.argmax([2*s*a/(s+a+1e-9) for s,a in zip(sw["senss"],sw["accs"])]))
-
-                st.plotly_chart(
-                    cutoff_chart(sw["cuts"], sw["accs"], sw["senss"], sw["specs"],
-                                  live_cutoff, "Accuracy / Sensitivity / Specificity vs Cutoff"),
-                    use_container_width=True
-                )
-                c1,c2,c3 = st.columns(3)
-                with c1: st.markdown(f"""<div class="metric-tile"><div class="m-label">Best Accuracy</div><div class="m-value">{sw['accs'][opt_acc_idx]:.1%}</div><div class="m-sub">cutoff={sw['cuts'][opt_acc_idx]:.2f}</div></div>""", unsafe_allow_html=True)
-                with c2: st.markdown(f"""<div class="metric-tile"><div class="m-label">Best Sensitivity</div><div class="m-value">{sw['senss'][opt_sens_idx]:.1%}</div><div class="m-sub">cutoff={sw['cuts'][opt_sens_idx]:.2f}</div></div>""", unsafe_allow_html=True)
-                with c3: st.markdown(f"""<div class="metric-tile"><div class="m-label">Best F1 trade-off</div><div class="m-value">{sw['accs'][opt_f1_idx]:.1%} acc</div><div class="m-sub">cutoff={sw['cuts'][opt_f1_idx]:.2f}</div></div>""", unsafe_allow_html=True)
-            else:
-                st.info("Set cutoff = 0 on the config page to generate the full sweep chart.")
-
-        # ── Tab: Feature Importance ──────────────────────────────
-        with tabs[tab_idx]:
-            tab_idx += 1
-            fi_model = st.selectbox("Model:", list(clf_res.keys()), key="fi_model_clf")
-            fi = feature_importances(clf_res[fi_model], R["feat_names"])
-            if fi is not None:
-                fi_sorted = fi.sort_values(ascending=False).head(20)
-                fig_fi = px.bar(fi_sorted.reset_index(), x="index", y=0,
-                                 labels={"index":"Feature","0":"Importance"},
-                                 title=f"Feature importance — {fi_model}",
-                                 color=0, color_continuous_scale="Teal")
-                fig_fi.update_coloraxes(showscale=False)
-                st.plotly_chart(dark_fig(fig_fi, 420), use_container_width=True)
-
-                # Correlation chart
-                if R.get("corr_with_y") is not None:
-                    cwy = R["corr_with_y"].reindex(fi_sorted.index).dropna()
-                    fig_co = px.bar(cwy.reset_index(), x="index", y=0,
-                                     labels={"index":"Feature","0":"|Corr with target|"},
-                                     title="Feature-target correlation",
-                                     color=0, color_continuous_scale="Purples")
-                    fig_co.update_coloraxes(showscale=False)
-                    st.plotly_chart(dark_fig(fig_co, 380), use_container_width=True)
-            else:
-                st.info("Feature importance not available for this model type.")
-
-    # ── Tab: Regression ───────────────────────────────────────────
-    if reg_res:
-        with tabs[tab_idx]:
-            tab_idx += 1
-            rows_r = [{"Model":m,"Train R²":r["train_r2"],"Val R²":r["val_r2"],
-                        "MAE":r["mae"],"RMSE":r["rmse"]} for m,r in reg_res.items()]
-            df_reg = pd.DataFrame(rows_r).sort_values("Val R²",ascending=False)
-            st.dataframe(df_reg.style.format({"Train R²":"{:.4f}","Val R²":"{:.4f}",
-                                               "MAE":"{:.4g}","RMSE":"{:.4g}"})
-                          .background_gradient(subset=["Val R²"],cmap="Greens"),
-                          use_container_width=True)
-
-            sel_reg_m = st.selectbox("Inspect:", list(reg_res.keys()), key="reg_insp")
-            rr = reg_res[sel_reg_m]
-            st.plotly_chart(scatter_avp(R["yval"].astype(float), rr["yp_val"],
-                                         f"Actual vs Predicted — {sel_reg_m}"),
-                            use_container_width=True)
-
-        with tabs[tab_idx]:
-            tab_idx += 1
-            fi_model_r = st.selectbox("Model:", list(reg_res.keys()), key="fi_model_reg")
-            fi_r = feature_importances(reg_res[fi_model_r], R["feat_names"])
-            if fi_r is not None:
-                fi_rs = fi_r.sort_values(ascending=False).head(20)
-                fig_fir = px.bar(fi_rs.reset_index(), x="index", y=0,
-                                  labels={"index":"Feature","0":"Importance"},
-                                  title=f"Feature importance — {fi_model_r}",
-                                  color=0, color_continuous_scale="Teal")
-                fig_fir.update_coloraxes(showscale=False)
-                st.plotly_chart(dark_fig(fig_fir, 420), use_container_width=True)
-            else:
-                st.info("Feature importance not available.")
-
-    # ── Tab: Clustering ───────────────────────────────────────────
-    if R.get("cluster_labels") is not None:
-        with tabs[tab_idx]:
-            tab_idx += 1
-            cl_data = R["cluster_data"]
-            num_feats = [c for c in cl_data.columns if c != "Cluster"]
-
-            c1, c2 = st.columns(2)
-            with c1:
-                xf = st.selectbox("X axis:", num_feats, index=0, key="cl_x")
-            with c2:
-                yf = st.selectbox("Y axis:", num_feats, index=min(1,len(num_feats)-1), key="cl_y")
-
-            fig_cl = px.scatter(cl_data, x=xf, y=yf, color="Cluster",
-                                 title=f"K-Means (k={cfg['params'].get('k_clusters',4)})",
-                                 color_discrete_sequence=px.colors.qualitative.Bold,
-                                 opacity=0.7)
-            st.plotly_chart(dark_fig(fig_cl, 420), use_container_width=True)
-
-            # Elbow chart
-            if R.get("elbow"):
-                el = R["elbow"]
-                fig_elbow = px.line(x=el["ks"], y=el["inertia"],
-                                     title="Elbow method — choose K at the 'elbow'",
-                                     labels={"x":"K","y":"Inertia"}, markers=True,
-                                     color_discrete_sequence=["#58a6ff"])
-                st.plotly_chart(dark_fig(fig_elbow, 300), use_container_width=True)
-
-            st.markdown("**Cluster centres (original scale)**")
-            st.dataframe(R["cluster_centers"].style.background_gradient(cmap="Blues"),
-                          use_container_width=True)
-
-    # ── Tab: Association Rules ────────────────────────────────────
-    if R.get("assoc_rules") is not None:
-        with tabs[tab_idx]:
-            tab_idx += 1
-            rules = R["assoc_rules"]
-            rules_disp = rules.copy()
-            rules_disp["antecedents"] = rules_disp["antecedents"].apply(lambda x: ", ".join(list(x)))
-            rules_disp["consequents"] = rules_disp["consequents"].apply(lambda x: ", ".join(list(x)))
-
-            min_lift_filter = st.slider("Filter: min lift", 1.0, float(rules_disp["lift"].max()), 1.0, 0.1)
-            filtered = rules_disp[rules_disp["lift"] >= min_lift_filter].head(30)
-
-            st.dataframe(filtered[["antecedents","consequents","support","confidence","lift"]]
-                          .rename(columns={"antecedents":"If…","consequents":"Then…"})
-                          .style.background_gradient(subset=["lift","confidence"],cmap="Greens")
-                          .format({"support":"{:.3f}","confidence":"{:.3f}","lift":"{:.3f}"}),
-                          use_container_width=True)
-
-            fig_rules = px.scatter(filtered, x="support", y="confidence",
-                                    size="lift", color="lift",
-                                    hover_data=["antecedents","consequents"],
-                                    title="Support vs Confidence (size = Lift)",
-                                    color_continuous_scale="Teal")
-            st.plotly_chart(dark_fig(fig_rules, 380), use_container_width=True)
-
-    # ── Tab: Data Profile ─────────────────────────────────────────
-    with tabs[tab_idx]:
-        tab_idx += 1
-        work_df = cfg["work_df"]
-        c1, c2 = st.columns(2)
-        with c1:
-            num_cols = work_df.select_dtypes("number").columns.tolist()[:15]
-            if num_cols:
-                n_c = min(3, len(num_cols)); n_r = (len(num_cols)+n_c-1)//n_c
-                fig_d = make_subplots(rows=n_r, cols=n_c, subplot_titles=num_cols[:n_r*n_c])
-                for i, col in enumerate(num_cols[:n_r*n_c]):
-                    r, c = divmod(i, n_c)
-                    fig_d.add_trace(go.Histogram(x=work_df[col].dropna(), name=col,
-                                                  showlegend=False,
-                                                  marker_color="#58a6ff", opacity=0.7),
-                                    row=r+1, col=c+1)
-                fig_d.update_layout(**DARK, height=250*n_r, title="Numeric distributions",
-                                     margin=dict(l=30,r=20,t=45,b=30))
-                st.plotly_chart(fig_d, use_container_width=True)
-
-        with c2:
-            num_c10 = work_df.select_dtypes("number").columns.tolist()[:10]
-            if len(num_c10) > 1:
-                st.plotly_chart(corr_heatmap(work_df[num_c10], "Correlation matrix"),
-                                use_container_width=True)
-
-        # Target distribution
-        if tgt and tgt in work_df.columns:
-            vc = work_df[tgt].value_counts().reset_index()
-            vc.columns = ["Value","Count"]
-            fig_tgt = px.bar(vc, x="Value", y="Count", title=f"Target distribution: {tgt}",
-                              color="Count", color_continuous_scale="Blues")
-            fig_tgt.update_coloraxes(showscale=False)
-            st.plotly_chart(dark_fig(fig_tgt, 300), use_container_width=True)
-
-    # ── Tab: Pipeline Log ─────────────────────────────────────────
-    with tabs[tab_idx]:
-        tab_idx += 1
-        st.markdown("**Preprocessing steps**")
-        for line in R.get("enc_log", []):
-            st.markdown(f"<div class='card' style='font-size:.82rem;padding:.5rem .8rem'>{line}</div>", unsafe_allow_html=True)
-        st.markdown("**Balancing**")
-        for line in R.get("bal_log", []):
-            st.markdown(f"<div class='card card-green' style='font-size:.82rem;padding:.5rem .8rem'>{line}</div>", unsafe_allow_html=True)
-        st.markdown("**Label maps**")
-        for k, v in R.get("label_maps", {}).items():
-            st.markdown(f"`{k}`: {v}")
-
-    # ── Tab: Methodology Flowcharts ───────────────────────────────
-    with tabs[tab_idx]:
-        tab_idx += 1
-        st.markdown("""<div class="card card-accent" style="margin-bottom:1rem;font-size:.93rem">
-        Each flowchart below illustrates how a method works — from raw data to final output.
-        These are general explanations independent of the current dataset.
-        </div>""", unsafe_allow_html=True)
-
-        meth_tabs = st.tabs(["📐 Decision Tree","📊 Logistic Regression","🧠 Neural Network",
-                              "📏 LDA","🌀 K-Means","🔗 Association Rules",
-                              "🌲 Random Forest","🎯 Naïve Bayes"])
-
-        # ── Decision Tree ────────────────────────────────────────
-        with meth_tabs[0]:
-            st.markdown("""### Decision Tree — How it works""")
-            st.markdown("""
-A Decision Tree learns a hierarchy of **if/else rules** on features to split data into pure groups.
-
-**Key concepts:**
-- **Gini impurity / Entropy** — measures how mixed a node's classes are; the algorithm picks the split that reduces this most
-- **Max depth** — limits how many splits deep the tree can go (prevents overfitting — default here is **6**)
-- **Min samples per leaf** — a node must have at least this many samples to be a leaf (prevents over-specific rules)
-- **No feature scaling needed** — trees are invariant to monotonic transformations
-            """)
-            st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/2/25/Cart_tree_kyphosis.png/440px-Cart_tree_kyphosis.png",
-                     caption="Example decision tree structure", width=420)
-            st.markdown("""
-```
-Raw Data
-   │
-   ▼
-[Pick best feature & threshold]  ← minimises Gini / Entropy
-   │
-   ├─ Feature ≤ threshold ──► Left subtree (recurse)
-   │
-   └─ Feature > threshold ──► Right subtree (recurse)
-                                    │
-                              [Leaf node: majority class]
-```
-**Overfitting risk:** Without depth limits, a tree can memorise every training row (100% train acc, poor val acc).
-This app caps `max_depth=6` by default. Increase with caution.
-            """)
-
-        # ── Logistic Regression ──────────────────────────────────
-        with meth_tabs[1]:
-            st.markdown("""### Logistic Regression — How it works""")
-            st.markdown("""
-Logistic Regression fits a **linear decision boundary** and outputs a **probability** via the sigmoid function.
-
-**Key concepts:**
-- **Log-odds / Logit** — the model predicts `log(p/(1-p)) = w₀ + w₁x₁ + … + wₙxₙ`
-- **Sigmoid** — converts log-odds to a probability between 0 and 1
-- **Cutoff** — you choose the threshold above which a probability is labelled "positive"
-- **Regularisation (C)** — smaller C = stronger penalty on large weights = simpler model
-
-**Flowchart:**
-```
-Features (scaled)
-   │
-   ▼
-Linear combination:  z = w·x + b
-   │
-   ▼
-Sigmoid:  P(y=1) = 1 / (1 + e^{-z})
-   │
-   ▼
-P(y=1) ≥ cutoff ?  ──► Positive class
-                   No ──► Negative class
-```
-**Assumes:** Linear separability; requires feature scaling (done automatically).
-            """)
-
-        # ── Neural Network ───────────────────────────────────────
-        with meth_tabs[2]:
-            st.markdown("""### Neural Network (MLP) — How it works""")
-            st.markdown("""
-A Multilayer Perceptron (MLP) learns **non-linear** patterns by stacking layers of weighted sums and activations.
-
-**Key concepts:**
-- **Hidden layers** — intermediate transformations; default here is `[64, 32]` neurons
-- **Activation (ReLU)** — `max(0, x)` introduces non-linearity so the network can model complex boundaries
-- **Backpropagation** — error is propagated backwards to update weights via gradient descent
-- **Alpha (L2 regularisation)** — penalises large weights to prevent overfitting
-
-**Flowchart:**
-```
-Input features (scaled)
-   │
-   ▼
-Hidden Layer 1 (64 neurons) → ReLU activation
-   │
-   ▼
-Hidden Layer 2 (32 neurons) → ReLU activation
-   │
-   ▼
-Output layer → Softmax (multiclass) / Sigmoid (binary)
-   │
-   ▼
-Predicted class / probability
-```
-**Watch out for:** Needs many iterations (epochs) to converge; sensitive to feature scale.
-            """)
-
-        # ── LDA ──────────────────────────────────────────────────
-        with meth_tabs[3]:
-            st.markdown("""### Linear Discriminant Analysis (LDA) — How it works""")
-            st.markdown("""
-LDA finds a **linear projection** of features that maximises the separation between classes while minimising spread within classes.
-
-**Key concepts:**
-- **Between-class scatter** — how far apart are the class means?
-- **Within-class scatter** — how spread out is each class?
-- LDA maximises the ratio: Between-class / Within-class
-- Also works as **dimensionality reduction** — projects to at most `n_classes - 1` dimensions
-
-**Flowchart:**
-```
-Compute class means (μ₁, μ₂, …)
-   │
-   ▼
-Compute within-class scatter matrix Sw
-   │
-   ▼
-Compute between-class scatter matrix Sb
-   │
-   ▼
-Find projection W = argmax |Sb| / |Sw|
-   │
-   ▼
-Project data: z = W^T · x
-   │
-   ▼
-Assign to nearest class centroid in projected space
-```
-**Assumes:** Normally distributed features; equal covariance per class. Fast and interpretable.
-            """)
-
-        # ── K-Means ──────────────────────────────────────────────
-        with meth_tabs[4]:
-            st.markdown("""### K-Means Clustering — How it works""")
-            st.markdown("""
-K-Means partitions data into **K groups** by iteratively assigning points to the nearest centroid and updating centroids.
-
-**Key concepts:**
-- **Centroid** — the mean position of all points in a cluster
-- **Inertia** — total within-cluster sum of squared distances (lower = tighter clusters)
-- **Elbow method** — plot inertia vs K; pick the K where improvement flattens
-- **K is set by you** — unlike classification, there is no "correct" K; domain knowledge helps
-
-**Flowchart:**
-```
-Choose K
-   │
-   ▼
-Initialise K centroids (K-Means++ method)
-   │
-   ▼
-┌──────────────────────────────────────┐
-│  Assign each point to nearest        │
-│  centroid (Euclidean distance)       │
-│        │                             │
-│  Update centroid = mean of cluster   │
-│        │                             │
-│  Converged? ──No──► repeat           │
-└──────────────────────────────────────┘
-   │ Yes
-   ▼
-Final cluster assignments + centres
-```
-**Requires feature scaling** (done automatically). Sensitive to outliers.
-            """)
-
-        # ── Association Rules ────────────────────────────────────
-        with meth_tabs[5]:
-            st.markdown("""### Association Rules (Apriori) — How it works""")
-            st.markdown("""
-Association rule mining finds **if → then patterns** in transactional data (e.g. "customers who buy X also buy Y").
-
-**Key metrics:**
-| Metric | Formula | Meaning |
-|---|---|---|
-| **Support** | freq(X∪Y) / N | How often does {X,Y} appear together? |
-| **Confidence** | freq(X∪Y) / freq(X) | Given X, how often does Y appear? |
-| **Lift** | Confidence / P(Y) | Is the rule better than random? Lift > 1 = yes |
-
-**Flowchart:**
-```
-Transaction data (binary columns)
-   │
-   ▼
-Find frequent itemsets with Support ≥ min_support
-(Apriori: prune any superset of an infrequent set)
-   │
-   ▼
-Generate candidate rules from frequent itemsets
-   │
-   ▼
-Filter rules with Confidence ≥ min_confidence
-   │
-   ▼
-Rank by Lift → display top rules
-```
-**Lift > 1** means the items co-occur more than by chance — actionable patterns.
-            """)
-
-        # ── Random Forest ────────────────────────────────────────
-        with meth_tabs[6]:
-            st.markdown("""### Random Forest — How it works""")
-            st.markdown("""
-Random Forest is an **ensemble** of many Decision Trees, each trained on a random subset of data and features.
-The final prediction is a **majority vote** (classification) or **mean** (regression).
-
-**Key concepts:**
-- **Bagging (Bootstrap Aggregating)** — each tree sees a random sample with replacement
-- **Feature randomness** — at each split, only a random subset of features is considered
-- **Variance reduction** — averaging many weak learners cancels out individual errors
-- **Feature importance** — average impurity decrease across all trees per feature
-
-**Flowchart:**
-```
-For each of N trees:
-  ├─ Sample rows with replacement (bootstrap)
-  ├─ At each split: sample √p features randomly
-  └─ Grow full tree (no pruning needed — diversity handles it)
-
-Prediction:
-  Input ──► Tree₁ ──► vote₁ ─┐
-  Input ──► Tree₂ ──► vote₂ ─┼──► Majority vote ──► Final class
-  Input ──► TreeN ──► voteN ─┘
-```
-**More robust to overfitting** than a single tree. Slower but usually more accurate.
-            """)
-
-        # ── Naïve Bayes ──────────────────────────────────────────
-        with meth_tabs[7]:
-            st.markdown("""### Naïve Bayes — How it works""")
-            st.markdown("""
-Naïve Bayes applies **Bayes' theorem** with the "naïve" assumption that features are conditionally independent given the class.
-
-**Bayes' theorem:**
-```
-P(class | features) ∝ P(class) × P(x₁|class) × P(x₂|class) × … × P(xₙ|class)
-```
-
-**Key concepts:**
-- **Prior P(class)** — how frequent is each class in training data?
-- **Likelihood P(xᵢ|class)** — for Gaussian NB: modelled as a normal distribution per feature per class
-- **Posterior** — multiply prior × all likelihoods; assign the class with highest posterior
-- **Var smoothing** — adds a tiny variance floor to prevent zero-probability issues
-
-**Flowchart:**
-```
-Training:
-  For each class:
-    Estimate mean and variance of each feature
-    Estimate class prior
-
-Prediction:
-  For each class:
-    Compute log P(class) + Σ log P(xᵢ | class)  ← sum of log-likelihoods
-  
-  Assign class with highest score
-```
-**Strengths:** Very fast; works well on high-dimensional data; good baseline.
-**Weakness:** Independence assumption rarely holds perfectly in practice.
-            """)
-
-    # ── Tab: Conclusions & Recommendations ───────────────────────
-    with tabs[tab_idx]:
-        tab_idx += 1
-        st.markdown("""<div class="card card-accent" style="margin-bottom:1rem;font-size:.93rem;color:#f0f6fc">
-        <b>◈ Conclusions &amp; Recommendations</b> — Actionable insights derived from this analysis.
-        Use these findings to guide real-world decisions based on your data.
-        </div>""", unsafe_allow_html=True)
-
-        # ── Data Source Summary ──────────────────────────────────
-        ctx_conf = S.get("context", {})
-        sel_sheets_c = ctx_conf.get("selected_sheets", [])
-        st.markdown("### 📄 Data Source & Analysis Purpose")
-        if sel_sheets_c:
-            sheet_info_parts = []
-            for sn in sel_sheets_c:
-                df_s = S["sheets"].get(sn, pd.DataFrame())
-                sheet_info_parts.append(f"**{sn}** ({df_s.shape[0]:,} rows, {df_s.shape[1]} columns)")
-            st.markdown(f"""<div class="card" style="color:#f0f6fc;font-size:.88rem">
-            <b>Sheet(s) used:</b> {' &nbsp;+&nbsp; '.join(sheet_info_parts)}<br>
-            <b>Target variable:</b> <code>{cfg.get('target','—')}</code><br>
-            <b>Analysis type:</b> {cfg.get('task','—')}<br>
-            <b>Balancing strategy:</b> {cfg.get('balance','none')} (seed={cfg.get('seed',42)})<br>
-            <b>Validation split:</b> {cfg.get('test_size',0.3):.0%} held-out
-            </div>""", unsafe_allow_html=True)
-
-            if len(sel_sheets_c) > 1:
-                dfs_c = [S["sheets"].get(s, pd.DataFrame()) for s in sel_sheets_c]
-                common_c = set(dfs_c[0].columns)
-                for d in dfs_c[1:]: common_c &= set(d.columns)
-                join_c = [c for c in common_c if "id" in c.lower() or "audit" in c.lower() or "key" in c.lower()]
-                same_c = all(set(d.columns) == set(dfs_c[0].columns) for d in dfs_c)
-                if join_c:
-                    st.markdown(f"""<div class="card card-green" style="color:#f0f6fc;font-size:.85rem;margin-top:.5rem">
-                    <b>🔗 How sheets were combined:</b> The sheets were merged horizontally on the shared key
-                    column <code>{join_c[0]}</code> (outer join). Each audit record now has all question
-                    columns from both instruments side-by-side, allowing models to use the full combined
-                    feature set to make predictions. This is the approach described in question (g) of the case.
-                    </div>""", unsafe_allow_html=True)
-                elif same_c:
-                    st.markdown("""<div class="card card-yellow" style="color:#f0f6fc;font-size:.85rem;margin-top:.5rem">
-                    <b>🔗 How sheets were combined:</b> The sheets have identical structures and were stacked
-                    vertically (concat). This increases sample size but treats both sheets as one homogeneous
-                    dataset. For comparing OA vs TML instruments independently, run each sheet separately.
-                    </div>""", unsafe_allow_html=True)
-                else:
-                    st.markdown("""<div class="card card-red" style="color:#f0f6fc;font-size:.85rem;margin-top:.5rem">
-                    <b>⚠️ Sheet combination:</b> Only the first sheet was used because the sheets have
-                    incompatible structures and no shared key column.
-                    </div>""", unsafe_allow_html=True)
-
-        # ── Model Performance Conclusions ────────────────────────
-        if clf_res:
-            st.markdown("---")
-            st.markdown("### 🏆 Model Performance Conclusions")
-
-            sorted_models = sorted(clf_res.items(), key=lambda x: x[1]["val_acc"], reverse=True)
-            best_name, best_r = sorted_models[0]
-            worst_name, worst_r = sorted_models[-1]
-
-            # Overfit analysis
-            overfit_models = [(m, r) for m, r in clf_res.items() if (r["train_acc"] - r["val_acc"]) > 0.12]
-            stable_models  = [(m, r) for m, r in clf_res.items() if abs(r["train_acc"] - r["val_acc"]) <= 0.08]
-
-            # Best model for fraud detection (balance sensitivity + accuracy)
-            # For fraud detection: high sensitivity is critical (don't miss fraudsters)
-            best_sens = max(clf_res.items(), key=lambda x: x[1].get("sensitivity", 0))
-            best_f1   = max(clf_res.items(), key=lambda x: x[1]["f1"])
-
-            st.markdown(f"""<div class="card card-green" style="color:#f0f6fc;font-size:.88rem">
-            <b>✅ Best overall accuracy:</b> <code>{best_name}</code> — {best_r['val_acc']:.1%} validation accuracy,
-            sensitivity {best_r.get('sensitivity',0):.1%}, specificity {best_r.get('specificity',0):.1%}<br><br>
-            <b>✅ Best sensitivity (catching fraud):</b> <code>{best_sens[0]}</code> — {best_sens[1].get('sensitivity',0):.1%}
-            (catches the most actual fraud cases — minimises missed fraudsters)<br><br>
-            <b>✅ Best F1-Score (balance):</b> <code>{best_f1[0]}</code> — F1={best_f1[1]['f1']:.3f}
-            (best trade-off between precision and recall)
-            </div>""", unsafe_allow_html=True)
-
-            if overfit_models:
-                names_ov = ", ".join(m for m,_ in overfit_models)
-                st.markdown(f"""<div class="card card-red" style="color:#f0f6fc;font-size:.88rem;margin-top:.5rem">
-                <b>⚠️ Overfitting concern:</b> {names_ov} show &gt;12% gap between training and validation
-                accuracy. These models have memorised training patterns rather than generalising. Avoid
-                relying on them for new, unseen audits without regularisation or more data.
-                </div>""", unsafe_allow_html=True)
-
-            if stable_models:
-                names_st = ", ".join(m for m,_ in stable_models)
-                st.markdown(f"""<div class="card card-accent" style="color:#f0f6fc;font-size:.88rem;margin-top:.5rem">
-                <b>✅ Well-generalising models:</b> {names_st} show consistent train vs validation performance
-                (&lt;8% gap). These are more trustworthy for deployment on new audit data.
-                </div>""", unsafe_allow_html=True)
-
-            # ── Recommendations ──────────────────────────────────
-            st.markdown("---")
-            st.markdown("### 💼 Recommendations for Real-World Use")
-
-            # Determine recommended model
-            # For fraud: prioritise sensitivity (catch fraud), penalise high overfit
-            score_dict = {}
-            for m, r in clf_res.items():
-                overfit_penalty = max(0, (r["train_acc"] - r["val_acc"]) - 0.05) * 2
-                score_dict[m] = r.get("sensitivity", 0) * 0.5 + r["val_acc"] * 0.3 + r["f1"] * 0.2 - overfit_penalty
-            recommended = max(score_dict, key=score_dict.get)
-            rec_r = clf_res[recommended]
-
-            st.markdown(f"""<div class="card card-purple" style="color:#f0f6fc;font-size:.9rem">
-            <b>🏅 Recommended Model for Deployment: {recommended}</b><br>
-            Validation accuracy: {rec_r['val_acc']:.1%} &nbsp;|&nbsp;
-            Sensitivity: {rec_r.get('sensitivity',0):.1%} &nbsp;|&nbsp;
-            F1: {rec_r['f1']:.3f}
-            </div>""", unsafe_allow_html=True)
-
-            st.markdown("""<div class="card" style="color:#f0f6fc;font-size:.87rem;margin-top:.5rem">
-            <b>Why sensitivity matters most for fraud detection:</b><br>
-            In a fraud audit context, a <b>False Negative</b> (classifying a fraudulent company as clean)
-            is far more costly than a <b>False Positive</b> (flagging a clean company for extra review).
-            Therefore, the recommended model prioritises <b>high sensitivity</b> while maintaining
-            reasonable overall accuracy and F1-score to avoid excessive false alarms.
-            </div>""", unsafe_allow_html=True)
-
-            st.markdown("""<div class="card card-yellow" style="color:#f0f6fc;font-size:.87rem;margin-top:.5rem">
-            <b>📋 Practical recommendations for OATML auditors:</b>
-            <ol style="color:#f0f6fc;margin:.5rem 0 0 1rem;line-height:1.8">
-              <li>Use the recommended model as a <b>first-pass screening tool</b> — flag high-probability
-                  fraud cases for deeper manual review rather than as a final verdict.</li>
-              <li>Set the <b>classification cutoff lower than 0.5</b> (e.g. 0.3–0.4) to increase
-                  sensitivity and catch more fraud cases at the cost of more false positives.</li>
-              <li>Combine OA and TML question sets (horizontal merge by audit ID) and run the
-                  composite logistic regression model — this typically outperforms either instrument alone.</li>
-              <li>Retrain the model periodically as new audits accumulate, since fraud patterns
-                  evolve over time.</li>
-              <li>Use <b>Feature Importance</b> results to identify which specific questions are
-                  most predictive — consider removing weak questions to simplify future questionnaires.</li>
-              <li>Treat the model's probability output (not just the 0/1 prediction) as a <b>risk score</b>
-                  to prioritise auditor attention — higher scores warrant more scrutiny.</li>
-            </ol>
-            </div>""", unsafe_allow_html=True)
-
-            # ── Gemini AI Deep Insights ───────────────────────────
-            st.markdown("---")
-            st.markdown("### ✨ Gemini AI — Deep Insights")
-            st.markdown("""<div class="card" style="color:#b1bac4;font-size:.84rem;margin-bottom:.5rem">
-            Click the button below to ask Gemini AI for a personalised analysis narrative,
-            improvement suggestions, and business recommendations based on your actual results.
-            </div>""", unsafe_allow_html=True)
-
-            if "gemini_insight_clf" not in S:
-                S["gemini_insight_clf"] = ""
-
-            if st.button("✨ Generate AI Insights", type="primary", key="btn_gemini_clf"):
-                # Build metrics summary for Gemini
-                metrics_rows = []
-                for mn, mr in clf_res.items():
-                    metrics_rows.append(
-                        f"{mn}: val_acc={mr['val_acc']:.1%}, sensitivity={mr.get('sensitivity',0):.1%}, "
-                        f"specificity={mr.get('specificity',0):.1%}, F1={mr['f1']:.3f}, "
-                        f"train_acc={mr['train_acc']:.1%}"
-                    )
-                metrics_str = "\n".join(metrics_rows)
-
-                # Feature importances for best model
-                fi_best = feature_importances(clf_res.get(recommended, {}), R.get("feat_names",[]))
-                fi_str = ""
-                if fi_best is not None:
-                    top5 = fi_best.sort_values(ascending=False).head(5)
-                    fi_str = ", ".join(f"{k}={v:.3f}" for k, v in top5.items())
-
-                sheet_names_str = ", ".join(sel_sheets_c)
-                user_desc = S.get("context", {}).get("description", "")
-                user_goal = S.get("context", {}).get("goal", "")
-
-                prompt = f"""You are an expert data scientist and business analyst reviewing a fraud detection analysis.
-
-Dataset context:
-- Sheets analysed: {sheet_names_str}
-- User description: {user_desc}
-- User goal: {user_goal}
-- Target variable: {cfg.get('target','fraud')}
-- Balancing: {cfg.get('balance','oversample_random')}, seed={cfg.get('seed',42)}
-- Validation split: {cfg.get('test_size',0.3):.0%}
-
-Model performance results:
-{metrics_str}
-
-Recommended model: {recommended} (val_acc={rec_r['val_acc']:.1%}, sensitivity={rec_r.get('sensitivity',0):.1%})
-Top 5 most important features: {fi_str if fi_str else 'not available'}
-
-Please provide:
-1. **Summary** (2-3 sentences): What do these results tell us overall?
-2. **Best model analysis**: Why is {recommended} recommended? What are its strengths and weaknesses?
-3. **Improvement suggestions**: 3 specific, actionable ways to improve accuracy or sensitivity given these results.
-4. **Business recommendations**: 3 concrete steps OATML auditors should take based on these findings.
-5. **Risk warnings**: Any data quality, overfitting, or deployment risks to be aware of.
-
-Write in clear, professional English. Be specific to this fraud detection context. Use markdown formatting."""
-
-                with st.spinner("✨ Gemini is generating deep insights…"):
-                    insight = gemini_text(prompt, "Could not generate insights — Gemini unavailable.")
-                S["gemini_insight_clf"] = insight
-
-            if S.get("gemini_insight_clf"):
-                st.markdown(f"""<div class="card card-purple" style="color:#f0f6fc;font-size:.88rem;line-height:1.7">
-                <span style="color:#bc8cff;font-weight:700;font-size:.95rem">✨ Gemini AI Analysis</span><br><br>
-                {S['gemini_insight_clf'].replace(chr(10), '<br>')}
-                </div>""", unsafe_allow_html=True)
-
-        elif reg_res:
-            st.markdown("---")
-            st.markdown("### 🏆 Model Performance Conclusions")
-            best_reg_name = max(reg_res, key=lambda m: reg_res[m]["val_r2"])
-            br_r = reg_res[best_reg_name]
-            st.markdown(f"""<div class="card card-green" style="color:#f0f6fc;font-size:.88rem">
-            <b>✅ Best regression model:</b> <code>{best_reg_name}</code><br>
-            Validation R²: {br_r['val_r2']:.4f} &nbsp;|&nbsp; MAE: {br_r['mae']:.4g} &nbsp;|&nbsp; RMSE: {br_r['rmse']:.4g}
-            </div>""", unsafe_allow_html=True)
-            st.markdown("""<div class="card card-accent" style="color:#f0f6fc;font-size:.87rem;margin-top:.5rem">
-            <b>📋 General recommendations:</b> Use the model's predictions as estimates, not exact values.
-            Check residuals for systematic bias. If R² is below 0.5, consider adding more features or
-            transforming variables. Validate on a completely held-out test set before deployment.
-            </div>""", unsafe_allow_html=True)
-
-            # ── Gemini AI for Regression ──────────────────────────
-            st.markdown("---")
-            st.markdown("### ✨ Gemini AI — Deep Insights")
-            if "gemini_insight_reg" not in S:
-                S["gemini_insight_reg"] = ""
-            if st.button("✨ Generate AI Insights", type="primary", key="btn_gemini_reg"):
-                metrics_reg = "\n".join(
-                    f"{m}: val_R²={r['val_r2']:.4f}, MAE={r['mae']:.4g}, RMSE={r['rmse']:.4g}"
-                    for m, r in reg_res.items()
-                )
-                prompt_reg = f"""You are a data science expert. A regression analysis produced these results:
-{metrics_reg}
-
-Best model: {best_reg_name} (R²={br_r['val_r2']:.4f})
-User goal: {S.get('context',{}).get('goal','')}
-
-Provide: 1) A 2-sentence summary, 2) Why {best_reg_name} performed best, 3) Three improvement suggestions,
-4) Two business action items. Use markdown formatting."""
-                with st.spinner("✨ Generating insights…"):
-                    S["gemini_insight_reg"] = gemini_text(prompt_reg, "Gemini unavailable.")
-            if S.get("gemini_insight_reg"):
-                st.markdown(f"""<div class="card card-purple" style="color:#f0f6fc;font-size:.88rem;line-height:1.7">
-                <span style="color:#bc8cff;font-weight:700">✨ Gemini AI Analysis</span><br><br>
-                {S['gemini_insight_reg'].replace(chr(10), '<br>')}
-                </div>""", unsafe_allow_html=True)
-
+            run_classification(method, df_active, target_col, feature_cols, test_size,
+                               balance_opt if 'balance_opt' in dir() else "None")
+
+    elif group == "prediction":
+        if not feature_cols:
+            st.error("Select at least one feature column.")
         else:
-            st.info("Run a classification or regression analysis to see conclusions and recommendations.")
+            run_regression(method, df_active, target_col, feature_cols, test_size)
 
-    # ── Re-run with different params ──────────────────────────────
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    with st.expander("🔄 Adjust parameters & re-run"):
-        st.markdown("""<div class="card" style="font-size:.83rem">
-        Change any parameter below and click <b>Re-run</b> to generate a new scenario.
-        Results will replace the current view.
-        </div>""", unsafe_allow_html=True)
+    elif method == "Association Rules (Apriori)":
+        run_association(df_active, min_sup, min_conf, min_lift)
 
-        rc1, rc2, rc3 = st.columns(3)
-        with rc1:
-            new_cutoff = st.slider("New cutoff", 0.05, 0.95, cfg["cutoff"], 0.02, key="rer_co")
-        with rc2:
-            new_balance = st.selectbox("Balancing", ["none","oversample_random","smote","undersample"],
-                                        index=["none","oversample_random","smote","undersample"].index(cfg["balance"]),
-                                        key="rer_bal")
-        with rc3:
-            new_topk = st.slider("Top-K features (0=all)", 0, min(40, len(R.get("feat_names",[]))), cfg["top_k_feat"], key="rer_topk")
+    elif method in ("K-Means Clustering", "Hierarchical Clustering"):
+        if not feature_cols:
+            st.error("Select at least one feature column.")
+        else:
+            run_clustering(method, df_active, feature_cols, n_clusters)
 
-        # Neural network hidden layers
-        new_hl = st.text_input("Neural Network hidden layers", ",".join(str(x) for x in cfg["params"].get("hidden_layers",[64,32])), key="rer_hl")
-        new_k_clf = st.slider("KNN: k", 1, 21, cfg["params"].get("k",5), 2, key="rer_k")
-        new_max_depth = st.slider("Tree max depth (0=unlimited)", 0, 20, cfg["params"].get("max_depth") or 0, key="rer_md")
+    elif method in ("Random Oversampling", "SMOTE"):
+        if not feature_cols:
+            st.error("Select at least one feature column.")
+        else:
+            run_balancing(method, df_active, target_col, feature_cols)
 
-        if st.button("▶ Re-run with these settings", type="primary", key="rerun_btn"):
-            try:
-                hl = [int(x.strip()) for x in new_hl.split(",") if x.strip()]
-            except Exception:
-                hl = [64, 32]
-            S["cfg"]["cutoff"]       = new_cutoff
-            S["cfg"]["sweep_cutoff"] = False
-            S["cfg"]["balance"]      = new_balance
-            S["cfg"]["top_k_feat"]   = new_topk
-            S["cfg"]["params"]["hidden_layers"] = hl
-            S["cfg"]["params"]["k"] = new_k_clf
-            S["cfg"]["params"]["max_depth"] = new_max_depth if new_max_depth > 0 else None
-            S["stage"] = "run"
-            st.rerun()
+    # ── AI interpretation ─────────────────────────────────────────────────────
+    st.divider()
+    st.markdown('<div class="section-header">🤖 AI Result Interpretation</div>',
+                unsafe_allow_html=True)
+    with st.spinner("Gemini is interpreting the results…"):
+        interp_prompt = f"""
+You are a data mining expert.
+The user just ran **{method}** on this dataset:
+{df_summary(df_active)}
+
+User's original goal: {user_goal or '(not specified)'}
+
+Please:
+1. Explain what the results likely mean in plain language.
+2. Highlight what went well and any limitations.
+3. Suggest the next steps the user should take.
+4. Suggest 1-2 alternative methods they could try.
+
+Keep it concise and practical. Respond in the same language the user used (default English).
+"""
+        interp = ask_gemini(interp_prompt)
+    st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">Gemini Interpretation</b><br><br>' +
+                interp.replace("\n", "<br>") + "</div>", unsafe_allow_html=True)
