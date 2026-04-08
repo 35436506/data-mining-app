@@ -153,16 +153,20 @@ import seaborn as sns
 from scipy.cluster.hierarchy import dendrogram, linkage
 
 # ── AI setup ─────────────────────────────────────────────────────────────────
-# Keys are entered by user in sidebar — defaults shown here (may be empty/exhausted)
-_DEFAULT_GEMINI_KEY = "AIzaSyAo9sIVLVkHQ_yQscblQbsZKstUhr6uNpY"
+# No hardcoded keys — users must enter their own in the sidebar
+_DEFAULT_GEMINI_KEY = ""  # intentionally blank — leaked keys are auto-revoked by Google
 _GEMINI_CANDIDATES  = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
 # OpenRouter free endpoint — no billing needed, many models available
 _OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
+# "openrouter/free" auto-picks the best available free model — future-proof
+# Specific fallbacks are current working free models as of April 2026
 _OPENROUTER_MODELS  = [
-    "google/gemini-2.0-flash-exp:free",
-    "google/gemma-3-27b-it:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "mistralai/mistral-7b-instruct:free",
+    "openrouter/auto",            # auto-router: picks best available
+    "google/gemma-3-27b-it:free", # Google Gemma 3 27B
+    "meta-llama/llama-3.3-70b-instruct:free",  # Meta Llama 3.3 70B
+    "nvidia/llama-3.1-nemotron-ultra-253b:free", # NVIDIA Nemotron
+    "deepseek/deepseek-r1:free",  # DeepSeek R1
+    "qwen/qwq-32b:free",          # Qwen 32B
 ]
 
 def _make_model(name, key):
@@ -269,9 +273,9 @@ METHODS = {
 }
 
 GROUP_META = {
-    "classification": {"label": "Classification", "color": "#58a6ff", "icon": "🔵"},
-    "prediction":     {"label": "Prediction / Regression", "color": "#bc8cff", "icon": "🟣"},
-    "association":    {"label": "Association / Clustering / Balancing", "color": "#f778ba", "icon": "🩷"},
+    "classification": {"label": "Classification / Phan loai", "color": "#58a6ff", "icon": "🔵"},
+    "prediction":     {"label": "Prediction / Du bao", "color": "#bc8cff", "icon": "🟣"},
+    "association":    {"label": "Association, Clustering & Balancing", "color": "#f778ba", "icon": "🔴"},
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -344,18 +348,26 @@ def _call_openrouter(prompt: str, or_key: str) -> str:
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 2000,
+                    "temperature": 0.7,
                 },
-                timeout=90,
+                timeout=120,
             )
+            if resp.status_code == 401:
+                return "__OR_FAIL__: Invalid OpenRouter API key (401). Please check your key."
             data = resp.json()
+            # Success path
             if "choices" in data and data["choices"]:
                 txt = data["choices"][0]["message"]["content"]
-                return f"*(AI via OpenRouter · {model})*\n\n{txt}"
-            err_msg = data.get("error", {}).get("message", str(data))
+                used_model = data.get("model", model)  # OR tells us actual model used
+                return f"*(AI via OpenRouter · {used_model})*\n\n{txt}"
+            # Error path
+            err_obj = data.get("error", {})
+            err_msg = err_obj.get("message", str(data)) if isinstance(err_obj, dict) else str(err_obj)
             errors.append(f"{model}: {err_msg}")
+        except _requests.exceptions.Timeout:
+            errors.append(f"{model}: timeout (120s)")
         except Exception as exc:
             errors.append(f"{model}: {exc}")
-    # All models failed — return joined errors for debugging
     return f"__OR_FAIL__: {' | '.join(errors)}"
 
 
@@ -402,7 +414,7 @@ def ask_gemini(prompt: str) -> str:
 1. Open [aistudio.google.com](https://aistudio.google.com) in a **private/incognito window**
 2. Sign in with a **different Google account** than before
 3. Click **Get API Key → Create API key**
-4. Paste into **"Gemini API Key"** in the sidebar and press Enter
+4. Paste into **"Khoa Gemini API / Gemini API Key"** in the sidebar and press Enter
 
 🔑 **Get a free OpenRouter key** (no card needed):
 1. Go to [openrouter.ai](https://openrouter.ai) → Sign up → **Keys → Create Key**
@@ -453,7 +465,13 @@ Please provide a comprehensive analysis covering:
 
 6. **Important data quality issues**: Missing values, encoding needs, scaling requirements.
 
-Be specific, practical, and refer to actual column names you see in the data. Respond in the same language the user used. Format clearly with headers."""
+Be specific, practical, and refer to actual column names you see in the data.
+IMPORTANT FORMATTING RULES:
+- Do NOT use any markdown: no **, no *, no #, no bullet points starting with -
+- Write in numbered sections and plain paragraphs
+- Use simple words that are clear without any formatting symbols
+- End your response with a SHORT SUMMARY section (max 5 sentences) that tells the user EXACTLY which 2-3 methods to try first and why
+Respond in the same language the user used."""
 
     return ask_gemini(prompt)
 
@@ -740,7 +758,7 @@ for k, v in {
     "ai_suggestion": "",
     "chosen_method": None,
     "step": 1,
-    "gemini_key": _DEFAULT_GEMINI_KEY,
+    "gemini_key": "",  # user must provide their own fresh key
     "openrouter_key": "",
 }.items():
     if k not in st.session_state:
@@ -752,7 +770,7 @@ for k, v in {
 with st.sidebar:
     st.markdown('<p class="section-header">📁 Data Upload</p>', unsafe_allow_html=True)
     uploaded_files = st.file_uploader(
-        "Upload CSV, Excel, JSON, or TXT",
+        "Tai len CSV, Excel, JSON hoac TXT / Upload CSV, Excel, JSON, or TXT",
         accept_multiple_files=True,
         type=["csv", "xlsx", "xls", "json", "txt"],
     )
@@ -767,7 +785,7 @@ with st.sidebar:
         st.session_state["sheets"] = all_sheets
 
         st.markdown('<p class="section-header">📊 Select Dataset</p>', unsafe_allow_html=True)
-        chosen = st.selectbox("Active dataset", list(all_sheets.keys()))
+        chosen = st.selectbox("Bo du lieu hien tai / Active dataset", list(all_sheets.keys()))
         st.session_state["active_sheet"] = chosen
 
         df_active = all_sheets[chosen]
@@ -777,8 +795,8 @@ with st.sidebar:
 
         if len(all_sheets) > 1:
             st.markdown('<p class="section-header">🔗 Merge Datasets</p>', unsafe_allow_html=True)
-            merge_on = st.text_input("Common key column (for merge)", "")
-            if st.button("Auto-merge all") and merge_on:
+            merge_on = st.text_input("Cot khoa chung (de gop) / Common key column", "")
+            if st.button("Tu dong gop tat ca / Auto-merge all") and merge_on:
                 merged = None
                 for df in all_sheets.values():
                     if merge_on in df.columns:
@@ -791,7 +809,7 @@ with st.sidebar:
     st.markdown('<p class="section-header">🔑 AI API Keys</p>', unsafe_allow_html=True)
     st.markdown(
         '<p style="color:#8b949e;font-size:0.78rem">'
-        'Enter at least one key to enable AI analysis. '
+        'Nhap it nhat mot khoa de bat phan tich AI. '
         'All ML methods work without a key.</p>',
         unsafe_allow_html=True,
     )
@@ -799,7 +817,7 @@ with st.sidebar:
     # Use key= so Streamlit binds directly to session_state — no value= needed.
     # Pre-populate session state with defaults BEFORE the widget renders.
     if "gemini_key" not in st.session_state:
-        st.session_state["gemini_key"] = _DEFAULT_GEMINI_KEY
+        st.session_state["gemini_key"] = ""
     if "openrouter_key" not in st.session_state:
         st.session_state["openrouter_key"] = ""
 
@@ -811,7 +829,7 @@ with st.sidebar:
         help="Get a free key at aistudio.google.com (15 req/min free tier)",
     )
     st.text_input(
-        "OpenRouter API Key (free fallback)",
+        "Khoa OpenRouter API (mien phi) / OpenRouter API Key",
         key="openrouter_key",      # directly syncs with st.session_state["openrouter_key"]
         type="password",
         placeholder="sk-or-...",
@@ -837,18 +855,22 @@ with st.sidebar:
 # MAIN AREA
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="hero-title">🧠 DataMine AI</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-sub">Upload your data · Describe your goal · Let AI guide your analysis</div>',
-            unsafe_allow_html=True)
+st.markdown(
+    '<div class="hero-sub">Tai du lieu len - Mo ta muc tieu - De AI huong dan phan tich</div>'
+    '<div style="color:#6e7681;font-size:0.85rem;margin-bottom:1rem">'
+    'Upload your data - Describe your goal - Let AI guide your analysis</div>',
+    unsafe_allow_html=True,
+)
 
 if not st.session_state["sheets"]:
     st.markdown("""
     <div class="card card-accent">
     <b style="color:#58a6ff">👋 Welcome!</b><br><br>
     <ol style="color:#8b949e;line-height:2">
-      <li>Upload one or more data files in the sidebar (CSV, Excel, JSON, TXT).</li>
-      <li>Describe your goal in plain language — the AI will suggest a method.</li>
-      <li>Configure parameters and run the chosen technique.</li>
-      <li>View results, charts, and AI interpretation.</li>
+      <li>Tai len mot hoac nhieu tep du lieu o thanh ben (CSV, Excel, JSON, TXT).<br><small>Upload one or more data files in the sidebar.</small></li>
+      <li>Mo ta muc tieu cua ban — AI se de xuat phuong phap phu hop.<br><small>Describe your goal — AI will suggest a method.</small></li>
+      <li>Cau hinh tham so va chay ky thuat da chon.<br><small>Configure parameters and run the chosen technique.</small></li>
+      <li>Xem ket qua, bieu do va giai thich tu AI.<br><small>View results, charts, and AI interpretation.</small></li>
     </ol>
     </div>
     """, unsafe_allow_html=True)
@@ -857,7 +879,7 @@ if not st.session_state["sheets"]:
 df_active = st.session_state["sheets"][st.session_state["active_sheet"]]
 
 # ── Step 1 – Data Preview ─────────────────────────────────────────────────────
-with st.expander("🔍 Data Preview & Profile", expanded=False):
+with st.expander("🔍 Xem truoc Du lieu / Data Preview & Profile", expanded=False):
     tab1, tab2, tab3 = st.tabs(["Table", "Statistics", "Column Types"])
     with tab1:
         st.dataframe(df_active.head(50), use_container_width=True)
@@ -873,17 +895,27 @@ with st.expander("🔍 Data Preview & Profile", expanded=False):
 st.divider()
 
 # ── Step 2 – AI Goal Understanding ───────────────────────────────────────────
-st.markdown('<div class="section-header">🤖 Step 1 — Describe Your Goal</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🤖 Buoc 1 / Step 1 - Mo ta Muc tieu / Describe Your Goal</div>', unsafe_allow_html=True)
 
 user_goal = st.text_area(
-    "What do you want to achieve? (in any language)",
+    "Ban muon dat duoc dieu gi? / What do you want to achieve? (in any language)",
     placeholder="e.g. 'I want to predict customer churn', 'Find which products are bought together', "
                 "'Segment customers into groups', 'Classify emails as spam or not'…",
     height=80,
 )
 
-if st.button("🔎 Analyse Goal with AI"):
-    with st.spinner("Gemini is reading your data and goal…"):
+# Show key status warning inline if neither key is set
+_g_key = st.session_state.get("gemini_key", "").strip()
+_o_key = st.session_state.get("openrouter_key", "").strip()
+if not _g_key and not _o_key:
+    st.warning(
+        "⚠️ **No AI key set.** Paste your Gemini or OpenRouter key in the sidebar to enable this step. "
+        "You can skip this and go straight to choosing a method below.",
+        icon="🔑",
+    )
+
+if st.button("🔎 Phan tich Muc tieu voi AI / Analyse Goal with AI"):
+    with st.spinner("AI dang doc du lieu va muc tieu cua ban..."):
         # Use multi-sheet analysis if multiple datasets loaded, else single
         all_sheets_loaded = st.session_state.get("sheets", {})
         if len(all_sheets_loaded) > 1:
@@ -907,18 +939,90 @@ Tasks:
 5. Suggest preprocessing steps.
 6. If this looks like fraud detection, recommend SMOTE to handle class imbalance.
 
-Respond in the same language the user used. Use clear headers. Be specific and practical."""
+IMPORTANT FORMATTING RULES: Do NOT use **, *, #, or bullet - symbols. Write plain numbered paragraphs only.
+End with a SHORT SUMMARY of the top 2-3 recommended methods.
+Respond in the same language the user used."""
             st.session_state["ai_suggestion"] = ask_gemini(prompt)
 
 if st.session_state["ai_suggestion"]:
-    st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">Gemini AI Analysis</b><br><br>' +
-                st.session_state["ai_suggestion"].replace("\n", "<br>") + "</div>",
-                unsafe_allow_html=True)
+    raw = st.session_state["ai_suggestion"]
+
+    # ── Clean up markdown symbols so they read as plain prose ────────────────
+    import re as _re
+    # Remove bold/italic markers
+    clean = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", raw)
+    # Remove heading hashes
+    clean = _re.sub(r"^#+\s*", "", clean, flags=_re.MULTILINE)
+    # Remove bullet dashes that start lines
+    clean = _re.sub(r"^[-•]\s+", "  ", clean, flags=_re.MULTILINE)
+    # Collapse triple+ newlines
+    clean = _re.sub(r"\n{3,}", "\n\n", clean)
+
+    with st.expander("🤖 AI Analysis (click to expand / Nhan de mo rong)", expanded=True):
+        col_lang1, col_lang2 = st.columns([1, 1])
+        with col_lang1:
+            st.markdown("**English Analysis**")
+            st.text(clean[:3000] + ("..." if len(clean) > 3000 else ""))
+        with col_lang2:
+            st.markdown("**Phan tich (Vietnamese / Tieng Viet)**")
+            if st.button("Dich sang Tieng Viet", key="translate_btn"):
+                with st.spinner("Dang dich..."):
+                    vn_prompt = f"""Translate the following data mining analysis into clear, natural Vietnamese.
+Keep the structure and all technical terms (Random Forest, SMOTE, Logistic Regression, etc.) in English but explain them in Vietnamese.
+Remove all markdown symbols like *, #, ** from both input and output.
+Write in plain numbered paragraphs, no bullet symbols.
+
+Text to translate:
+{clean[:3000]}"""
+                    st.session_state["ai_vn"] = ask_gemini(vn_prompt)
+            if st.session_state.get("ai_vn"):
+                vn_text = st.session_state["ai_vn"]
+                vn_clean = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", vn_text)
+                vn_clean = _re.sub(r"^#+\s*", "", vn_clean, flags=_re.MULTILINE)
+                vn_clean = _re.sub(r"^[-•]\s+", "  ", vn_clean, flags=_re.MULTILINE)
+                st.text(vn_clean)
+            else:
+                st.info("Nhan nut phia tren de dich sang Tieng Viet")
+
+    # ── AI Quick Recommendation Summary ──────────────────────────────────────
+    st.markdown("---")
+    st.markdown("#### Huong dan nhanh / Quick Recommendation")
+    st.markdown(
+        "Dua tren phan tich AI, hay chon mot trong cac phuong phap phu hop nhat duoi day "
+        "(Based on the AI analysis, select the most suitable method below):"
+    )
+
+    # Parse suggested methods from the raw AI text
+    suggested = []
+    for m_name in METHODS.keys():
+        if m_name.lower() in raw.lower():
+            suggested.append(m_name)
+    # Limit to top 4
+    suggested = suggested[:4]
+
+    if suggested:
+        rec_cols = st.columns(len(suggested))
+        for idx, m_name in enumerate(suggested):
+            with rec_cols[idx]:
+                m_meta = METHODS[m_name]
+                badge_color = {"classification": "#1f3a5f", "prediction": "#2d1f5f", "association": "#3d1f35"}[m_meta["group"]]
+                text_color  = {"classification": "#58a6ff", "prediction": "#bc8cff", "association": "#f778ba"}[m_meta["group"]]
+                st.markdown(
+                    f'<div style="background:{badge_color};border-radius:8px;padding:0.7rem;text-align:center;">' +
+                    f'<b style="color:{text_color}">{m_name}</b><br>' +
+                    f'<small style="color:#c9d1d9">{m_meta["vn"]}</small></div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button(f"Chon / Select", key=f"rec_{m_name}"):
+                    st.session_state["chosen_method"] = m_name
+                    st.rerun()
+    else:
+        st.info("Khong phat hien phuong phap cu the. Hay chon tu danh sach phia duoi.")
 
 st.divider()
 
 # ── Step 3 – Method Selection ─────────────────────────────────────────────────
-st.markdown('<div class="section-header">🛠️ Step 2 — Choose a Method</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🛠️ Buoc 2 / Step 2 - Chon Phuong phap / Choose a Method</div>', unsafe_allow_html=True)
 
 for group_id, gmeta in GROUP_META.items():
     st.markdown(f"**{gmeta['icon']} {gmeta['label']}**")
@@ -948,7 +1052,7 @@ st.divider()
 # ── Step 4 – Configure & Run ──────────────────────────────────────────────────
 method = st.session_state["chosen_method"]
 if not method:
-    st.info("👆 Select a method above to configure and run it.")
+    st.info("👆 Hay chon mot phuong phap o tren de cau hinh va chay / Select a method above.")
     st.stop()
 
 st.markdown(f'<div class="section-header">⚡ Step 3 — Configure & Run: {method}</div>',
@@ -967,17 +1071,17 @@ group = meta["group"]
 if group in ("classification", "prediction") or method in ("Random Oversampling", "SMOTE"):
     col_a, col_b = st.columns(2)
     with col_a:
-        target_col = st.selectbox("🎯 Target column", all_cols)
+        target_col = st.selectbox("🎯 Cot muc tieu / Target column", all_cols)
     with col_b:
         feature_cols = st.multiselect(
-            "📐 Feature columns",
+            "📐 Cac cot dac trung / Feature columns",
             [c for c in all_cols if c != target_col],
             default=[c for c in numeric_cols if c != target_col][:8],
         )
 
 if group == "classification":
-    test_size = st.slider("Test split %", 10, 40, 20) / 100
-    balance_opt = st.selectbox("Class balancing (optional)",
+    test_size = st.slider("Ty le kiem tra % / Test split %", 10, 40, 20) / 100
+    balance_opt = st.selectbox("Can bang lop (tuy chon) / Class balancing (optional)",
                                ["None", "Random Oversampling", "SMOTE"])
 elif group == "prediction" and method != "Neural Networks Regression (MLP)":
     test_size = st.slider("Test split %", 10, 40, 20) / 100
