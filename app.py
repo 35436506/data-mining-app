@@ -15,6 +15,50 @@ from plotly.subplots import make_subplots
 import json, re
 
 # ───────────────────────────────────────────────────────────────────
+# GEMINI AI SETUP
+# ───────────────────────────────────────────────────────────────────
+GEMINI_API_KEY = "AIzaSyAo9sIVLVkHQ_yQscblQbsZKstUhr6uNpY"
+_gemini_model = None
+
+def get_gemini():
+    global _gemini_model
+    if _gemini_model is not None:
+        return _gemini_model
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+        _gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+        return _gemini_model
+    except Exception:
+        return None
+
+def gemini_json(prompt: str, fallback: dict) -> dict:
+    """Call Gemini and parse JSON response; return fallback on any error."""
+    try:
+        m = get_gemini()
+        if m is None:
+            return fallback
+        resp = m.generate_content(prompt)
+        raw = resp.text.strip()
+        # Strip markdown code fences if present
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        return json.loads(raw)
+    except Exception:
+        return fallback
+
+def gemini_text(prompt: str, fallback: str = "") -> str:
+    """Call Gemini and return plain text response."""
+    try:
+        m = get_gemini()
+        if m is None:
+            return fallback
+        resp = m.generate_content(prompt)
+        return resp.text.strip()
+    except Exception:
+        return fallback
+
+# ───────────────────────────────────────────────────────────────────
 # PAGE SETUP
 # ───────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -143,41 +187,8 @@ code, pre, .mono { font-family: 'JetBrains Mono', monospace !important; }
   margin: 1.2rem 0;
 }
 
-/* ── Vietnamese Tooltips ─────────────────────────────────────── */
-[data-vi] {
-  position: relative;
-  cursor: help;
-  border-bottom: 1px dashed #58a6ff44;
-}
-[data-vi]:hover::after {
-  content: attr(data-vi);
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: #1c2230;
-  border: 1px solid #58a6ff;
-  border-radius: 7px;
-  padding: .45rem .75rem;
-  font-size: .8rem;
-  color: #e6edf3;
-  white-space: nowrap;
-  max-width: 320px;
-  white-space: normal;
-  z-index: 9999;
-  line-height: 1.5;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-  pointer-events: none;
-  font-family: 'Space Grotesk', sans-serif;
-}
-[data-vi]:hover::before {
-  content: "🇻🇳 ";
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(calc(-50% - 4px));
-  z-index: 10000;
-}
+/* ── Ensure white text everywhere ────────────────────────────── */
+p, li, span, div, label, h1, h2, h3, h4, h5, h6 { color: #f0f6fc; }
 
 /* ── Streamlit overrides ─────────────────────────────────────── */
 .stSelectbox>div>div, .stMultiSelect>div>div,
@@ -235,7 +246,7 @@ st.markdown("""
   <div class="logo">◈</div>
   <div>
     <h1>Data Mining Studio</h1>
-    <p><span data-vi="Di chuột vào các từ có gạch chân để xem tiếng Việt">Hover over underlined terms to see Vietnamese translations 🇻🇳</span></p>
+    <p style="color:#8b949e">Professional Analytics Platform — Upload your data and discover patterns</p>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -953,7 +964,7 @@ if S["stage"] == "profile":
     st.markdown("""
     <div class="step-header">
       <div class="step-num">2</div>
-      <span data-vi="Hiểu dữ liệu và mục tiêu phân tích của bạn">Understand your data &amp; goals</span>
+      <span>Understand your data &amp; goals</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1000,8 +1011,8 @@ if S["stage"] == "profile":
     # ── Goal intake ───────────────────────────────────────────────
     st.markdown("""
     <div class="bubble-sys">
-    <b>◈ Studio:</b> <span data-vi="Trước khi chạy mô hình, hãy cho chúng tôi biết bạn muốn đạt được điều gì. Điều này giúp chọn đúng kỹ thuật và chỉ số đánh giá.">Before running any model, tell us what you're trying to achieve.
-    This helps select the right technique, encoding, and evaluation metrics.</span>
+    <b>◈ Studio:</b> Before running any model, tell us what you're trying to achieve.
+    This helps select the right technique, encoding, and evaluation metrics.
     </div>
     """, unsafe_allow_html=True)
 
@@ -1021,14 +1032,14 @@ if S["stage"] == "profile":
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown('<span class="ctx-label" data-vi="Dữ liệu của bạn chứa thông tin gì? (ví dụ: thông tin khách hàng, kết quả khảo sát...)">📋 What does your data contain?</span>', unsafe_allow_html=True)
+        st.markdown('<span class="ctx-label">📋 What does your data contain?</span>', unsafe_allow_html=True)
         context["description"] = st.text_area(
             "What does your data contain?",
             placeholder="e.g., Survey results (Yes/No answers) from 500 customers about their shopping habits. Each row is one customer.",
             height=110, key="ctx_desc", label_visibility="collapsed"
         )
     with c2:
-        st.markdown('<span class="ctx-label" data-vi="Bạn muốn khám phá hoặc dự đoán điều gì từ dữ liệu này?">🎯 What do you want to find out?</span>', unsafe_allow_html=True)
+        st.markdown('<span class="ctx-label">🎯 What do you want to find out?</span>', unsafe_allow_html=True)
         context["goal"] = st.text_area(
             "What do you want to find out?",
             placeholder="e.g., Predict which customers are likely to buy again, and find out which factors matter most for that prediction.",
@@ -1096,30 +1107,79 @@ if S["stage"] == "profile":
 
     if st.button("→ Review & Configure", type="primary", disabled=not ready):
         S["context"] = context
-        # Auto-resolve task
-        desc_full = (context["description"] + " " + context["goal"] + " " + context["extra"]).lower()
+
+        # ── Gemini Intent Analysis ─────────────────────────────────
         task = context["task"]
-        if task == "(auto-detect)":
-            if any(k in desc_full for k in ["classify","fraud","detect","label","categor","flag"]):
-                task = "Classification"
-            elif any(k in desc_full for k in ["predict","forecast","regress","value","revenue","price"]):
-                task = "Regression"
-            elif any(k in desc_full for k in ["cluster","segment","group"]):
-                task = "Clustering only"
-            elif any(k in desc_full for k in ["basket","association","apriori","co-occur","market"]):
-                task = "Association Rules only"
-            else:
-                task = "Classification"  # safe default
-        S["context"]["task_resolved"] = task
+        tgt  = context["target"]
+        col_list = list({c for k in (context.get("selected_sheets") or all_sheet_names)
+                         for c in S["sheets"].get(k, pd.DataFrame()).columns})
 
-        # Auto-resolve target
-        tgt = context["target"]
-        if tgt == "(auto-detect)" and suggestions:
-            tgt = suggestions[0]["col"]
-        elif tgt == "(auto-detect)":
-            tgt = None
+        if task == "(auto-detect)" or tgt == "(auto-detect)":
+            sample_rows = ""
+            first_sheet = (context.get("selected_sheets") or all_sheet_names)[0]
+            df_sample = S["sheets"].get(first_sheet, pd.DataFrame()).head(3)
+            sample_rows = df_sample.to_json(orient="records")
+
+            prompt = f"""You are a data science expert. Analyse the user's intent and dataset.
+
+User Description: {context.get('description','')}
+User Goal: {context.get('goal','')}
+Extra constraints: {context.get('extra','')}
+Available columns: {col_list}
+Sample rows (first 3): {sample_rows}
+
+Return ONLY a valid JSON object with these exact keys:
+{{
+  "task": "<one of: Classification, Regression, Clustering only, Association Rules only, Full analysis>",
+  "target": "<exact column name from the list above, or null if not applicable>",
+  "reasoning": "<one sentence explaining why>",
+  "encoding_hints": {{"column_name": "suggested_encoding"}},
+  "top_features": ["list","of","likely","important","columns","for","the","target"]
+}}
+
+Rules:
+- For fraud/detection/binary outcome tasks → Classification
+- For price/continuous value prediction → Regression
+- For segmentation/grouping tasks → Clustering only
+- For basket/co-occurrence tasks → Association Rules only
+- "target" must be an exact column name from the list, or null
+- Respond ONLY with the JSON object, no other text"""
+
+            with st.spinner("◈ Gemini is analysing your intent…"):
+                fallback_task = "Classification"
+                desc_full = (context["description"] + " " + context["goal"] + " " + context.get("extra","")).lower()
+                if any(k in desc_full for k in ["regress","revenue","price","forecast","continuous"]):
+                    fallback_task = "Regression"
+                elif any(k in desc_full for k in ["cluster","segment","group"]):
+                    fallback_task = "Clustering only"
+
+                fallback_tgt = suggestions[0]["col"] if suggestions else (col_list[0] if col_list else None)
+
+                ai = gemini_json(prompt, {
+                    "task": fallback_task,
+                    "target": fallback_tgt,
+                    "reasoning": "Auto-detected from keywords.",
+                    "encoding_hints": {},
+                    "top_features": []
+                })
+
+            if task == "(auto-detect)":
+                task = ai.get("task", fallback_task)
+                if task not in ["Classification","Regression","Clustering only","Association Rules only","Full analysis"]:
+                    task = fallback_task
+            if tgt == "(auto-detect)":
+                ai_tgt = ai.get("target")
+                tgt = ai_tgt if (ai_tgt and ai_tgt in col_list) else fallback_tgt
+
+            S["context"]["gemini_reasoning"]     = ai.get("reasoning", "")
+            S["context"]["gemini_encoding_hints"] = ai.get("encoding_hints", {})
+            S["context"]["gemini_top_features"]  = ai.get("top_features", [])
+            S["context"]["gemini_used"]          = True
+        else:
+            S["context"]["gemini_used"] = False
+
+        S["context"]["task_resolved"]   = task
         S["context"]["target_resolved"] = tgt
-
         S["stage"] = "confirm"
         st.rerun()
     st.stop()
@@ -1136,11 +1196,18 @@ if S["stage"] == "confirm":
     st.markdown("""
     <div class="step-header">
       <div class="step-num">3</div>
-      <span data-vi="Xem lại cài đặt và khởi chạy phân tích">Configure &amp; Launch</span>
+      <span>Configure &amp; Launch</span>
     </div>
     """, unsafe_allow_html=True)
 
     # Show what was understood
+    gemini_badge = ""
+    if ctx.get("gemini_used"):
+        gemini_badge = f'<span style="background:#1a2f1a;color:#3fb950;border:1px solid #2e5c2e;border-radius:12px;padding:.15rem .6rem;font-size:.75rem;margin-left:.5rem">✨ Gemini AI</span>'
+    reasoning_line = ""
+    if ctx.get("gemini_reasoning"):
+        reasoning_line = f'<br><span style="color:#b1bac4;font-size:.82rem">💡 AI reasoning: {ctx["gemini_reasoning"]}</span>'
+
     st.markdown(f"""
     <div class="bubble-user">
     <b>You said:</b> {ctx.get('description','')}<br>
@@ -1148,9 +1215,91 @@ if S["stage"] == "confirm":
     {f'<b>Extra:</b> {ctx["extra"]}' if ctx.get("extra") else ""}
     </div>
     <div class="bubble-sys">
-    <b>◈ Studio understood:</b><br>
+    <b>◈ Studio understood:</b>{gemini_badge}<br>
     Task → <code>{task}</code> &nbsp;|&nbsp; Target → <code>{tgt or 'none'}</code> &nbsp;|&nbsp;
     Sheets → {", ".join(f"<code>{s}</code>" for s in ctx['selected_sheets'])}
+    {reasoning_line}
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Sheet info + Analysis Purpose Banner ──────────────────────
+    sel_sheets_info = ctx["selected_sheets"]
+    sheet_rows_html = ""
+    for sname in sel_sheets_info:
+        df_s = S["sheets"].get(sname, pd.DataFrame())
+        sheet_rows_html += f"""
+        <div style="margin:.4rem 0; padding:.6rem 1rem; background:#0d1117; border-radius:8px; border-left:3px solid #58a6ff;">
+          <span style="color:#58a6ff;font-weight:700;font-size:.9rem">📄 Sheet: {sname}</span>
+          <span style="color:#b1bac4;font-size:.82rem;margin-left:1rem">{df_s.shape[0]:,} rows × {df_s.shape[1]} columns</span>
+          <br><span style="color:#8b949e;font-size:.8rem">Columns: {', '.join(df_s.columns[:10].tolist())}{' …' if len(df_s.columns)>10 else ''}</span>
+        </div>"""
+
+    # Multi-sheet combination explanation
+    combination_html = ""
+    if len(sel_sheets_info) > 1:
+        dfs_check = [S["sheets"].get(s, pd.DataFrame()) for s in sel_sheets_info]
+        common_cols_check = set(dfs_check[0].columns)
+        for d in dfs_check[1:]: common_cols_check &= set(d.columns)
+        join_cands = [c for c in common_cols_check if "id" in c.lower() or "audit" in c.lower() or "key" in c.lower()]
+        same_cols = all(set(d.columns) == set(dfs_check[0].columns) for d in dfs_check)
+
+        if join_cands:
+            join_key = join_cands[0]
+            combination_html = f"""
+            <div style="margin-top:.8rem;padding:.8rem 1rem;background:#1a3a1f;border-radius:8px;border-left:3px solid #3fb950;">
+              <span style="color:#3fb950;font-weight:700">🔗 Multi-Sheet Combination: Horizontal Join (Merge)</span><br>
+              <span style="color:#e6edf3;font-size:.85rem">
+              The sheets share a common key column <code style="color:#58a6ff">{join_key}</code>.
+              They will be joined using an <b>outer merge</b> on this key — meaning each unique audit record
+              gets <b>all features from both sheets side-by-side</b> in one row.
+              Questions from each sheet become separate columns (suffixed if duplicate names exist).
+              This lets classifiers use <b>both question sets simultaneously</b> to predict fraud.
+              The merged dataset then goes through the same train/validation split and balancing pipeline.
+              </span>
+            </div>"""
+        elif same_cols:
+            combination_html = f"""
+            <div style="margin-top:.8rem;padding:.8rem 1rem;background:#3a2f0a;border-radius:8px;border-left:3px solid #d29922;">
+              <span style="color:#d29922;font-weight:700">🔗 Multi-Sheet Combination: Vertical Stack (Concat)</span><br>
+              <span style="color:#e6edf3;font-size:.85rem">
+              The sheets have <b>identical column structures</b>, so they are stacked vertically —
+              all rows from both sheets are combined into one larger dataset.
+              This increases total sample size and gives models more training examples.
+              <b>Note:</b> If the sheets represent different question instruments (e.g. OA vs TML),
+              a horizontal merge (joining by audit ID) is more analytically meaningful than stacking.
+              Consider selecting sheets individually to compare them, or ensuring they share an ID column for merging.
+              </span>
+            </div>"""
+        else:
+            combination_html = f"""
+            <div style="margin-top:.8rem;padding:.8rem 1rem;background:#3a0f0f;border-radius:8px;border-left:3px solid #f85149;">
+              <span style="color:#f85149;font-weight:700">⚠️ Multi-Sheet Combination: First Sheet Used</span><br>
+              <span style="color:#e6edf3;font-size:.85rem">
+              The selected sheets have <b>different column structures and no common key column</b>,
+              so only the first sheet (<code style="color:#58a6ff">{sel_sheets_info[0]}</code>) will be analysed.
+              To combine both sheets, ensure they share a common ID/key column (e.g. an audit number),
+              or run each sheet separately to compare results.
+              </span>
+            </div>"""
+
+    # Purpose description
+    purpose_map = {
+        "Classification": "🎯 <b>Purpose:</b> Classify each record into one of the target categories (e.g. Fraud / Non-Fraud) using the question responses as input features. Multiple classification algorithms are trained and compared on training accuracy, validation accuracy, sensitivity, and specificity.",
+        "Regression": "📈 <b>Purpose:</b> Estimate a continuous numeric output from the input features using regression models. Models are compared on R², MAE, and RMSE on a held-out validation set.",
+        "Clustering only": "🔵 <b>Purpose:</b> Group records into clusters based on similarity in their features, without a predefined target. Useful for discovering hidden patterns or segment structures.",
+        "Association Rules only": "🔗 <b>Purpose:</b> Find co-occurrence patterns between feature values (e.g. 'if answer to Q1=Yes then answer to Q3=Yes'). Useful for understanding which question responses tend to appear together.",
+        "Full analysis": "🔬 <b>Purpose:</b> Run the complete suite — Classification, Clustering, and Association Rules — to gain a multi-angle view of the data.",
+    }
+    purpose_txt = purpose_map.get(task, f"🎯 <b>Purpose:</b> {task}")
+
+    st.markdown(f"""
+    <div class="card card-accent" style="margin:.8rem 0">
+      <div style="font-size:.95rem;font-weight:700;color:#58a6ff;margin-bottom:.5rem">📊 Data Sources Being Analysed</div>
+      {sheet_rows_html}
+      {combination_html}
+      <div style="margin-top:.8rem;padding:.6rem 1rem;background:#0d1117;border-radius:8px;font-size:.88rem;color:#e6edf3">
+        {purpose_txt}
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1184,7 +1333,14 @@ if S["stage"] == "confirm":
     all_cols = list(work_df.columns)
 
     # ── Encoding overrides ────────────────────────────────────────
+    gemini_enc_hints = ctx.get("gemini_encoding_hints", {})
     with st.expander("🔤 Encoding overrides (optional — defaults are auto)", expanded=False):
+        if gemini_enc_hints:
+            hints_text = " &nbsp;|&nbsp; ".join(
+                f"<code>{c}</code> → <code>{v}</code>" for c, v in list(gemini_enc_hints.items())[:8]
+            )
+            st.markdown(f"""<div class="card card-green" style="font-size:.8rem;padding:.5rem .9rem;margin-bottom:.5rem">
+            ✨ <b>Gemini AI suggests:</b> {hints_text}</div>""", unsafe_allow_html=True)
         enc_overrides = {}
         enc_opts = ["auto", "passthrough", "label", "onehot", "target", "ordinal", "drop"]
         cat_cols = [c for c, inf in work_prof.items() if inf.get("kind") in ("categorical","boolean")]
@@ -1640,7 +1796,7 @@ if S["stage"] == "results":
     if reg_res: tab_names += ["📈 Regression Results","🔑 Feature Importance"]
     if R.get("cluster_labels") is not None: tab_names.append("🔵 Clustering")
     if R.get("assoc_rules") is not None:    tab_names.append("🔗 Association Rules")
-    tab_names += ["🧬 Data Profile","⚙️ Pipeline Log","🗺️ Methodology"]
+    tab_names += ["🧬 Data Profile","⚙️ Pipeline Log","🗺️ Methodology","💡 Conclusions & Recommendations"]
 
     tabs = st.tabs(tab_names)
     tab_idx = 0
@@ -1766,8 +1922,8 @@ if S["stage"] == "results":
             tab_idx += 1
             # Interactive cutoff slider
             st.markdown("""<div class="card card-yellow" style="font-size:.84rem">
-            <span data-vi="Thay đổi ngưỡng phân loại để xem sự đánh đổi giữa Độ nhạy và Độ đặc hiệu theo thời gian thực. Ngưỡng thấp hơn → Độ nhạy cao hơn (bắt nhiều trường hợp dương hơn) nhưng sẽ có nhiều cảnh báo sai hơn.">Change the cutoff to explore the Sensitivity / Specificity trade-off in real time.
-            Lower cutoff → higher Sensitivity (catch more positives) but more False Positives.</span>
+            Change the cutoff to explore the Sensitivity / Specificity trade-off in real time.
+            Lower cutoff → higher Sensitivity (catch more positives) but more False Positives.
             </div>""", unsafe_allow_html=True)
 
             live_cutoff = st.slider("Live cutoff", 0.05, 0.95,
@@ -2246,6 +2402,256 @@ Prediction:
 **Strengths:** Very fast; works well on high-dimensional data; good baseline.
 **Weakness:** Independence assumption rarely holds perfectly in practice.
             """)
+
+    # ── Tab: Conclusions & Recommendations ───────────────────────
+    with tabs[tab_idx]:
+        tab_idx += 1
+        st.markdown("""<div class="card card-accent" style="margin-bottom:1rem;font-size:.93rem;color:#f0f6fc">
+        <b>◈ Conclusions &amp; Recommendations</b> — Actionable insights derived from this analysis.
+        Use these findings to guide real-world decisions based on your data.
+        </div>""", unsafe_allow_html=True)
+
+        # ── Data Source Summary ──────────────────────────────────
+        ctx_conf = S.get("context", {})
+        sel_sheets_c = ctx_conf.get("selected_sheets", [])
+        st.markdown("### 📄 Data Source & Analysis Purpose")
+        if sel_sheets_c:
+            sheet_info_parts = []
+            for sn in sel_sheets_c:
+                df_s = S["sheets"].get(sn, pd.DataFrame())
+                sheet_info_parts.append(f"**{sn}** ({df_s.shape[0]:,} rows, {df_s.shape[1]} columns)")
+            st.markdown(f"""<div class="card" style="color:#f0f6fc;font-size:.88rem">
+            <b>Sheet(s) used:</b> {' &nbsp;+&nbsp; '.join(sheet_info_parts)}<br>
+            <b>Target variable:</b> <code>{cfg.get('target','—')}</code><br>
+            <b>Analysis type:</b> {cfg.get('task','—')}<br>
+            <b>Balancing strategy:</b> {cfg.get('balance','none')} (seed={cfg.get('seed',42)})<br>
+            <b>Validation split:</b> {cfg.get('test_size',0.3):.0%} held-out
+            </div>""", unsafe_allow_html=True)
+
+            if len(sel_sheets_c) > 1:
+                dfs_c = [S["sheets"].get(s, pd.DataFrame()) for s in sel_sheets_c]
+                common_c = set(dfs_c[0].columns)
+                for d in dfs_c[1:]: common_c &= set(d.columns)
+                join_c = [c for c in common_c if "id" in c.lower() or "audit" in c.lower() or "key" in c.lower()]
+                same_c = all(set(d.columns) == set(dfs_c[0].columns) for d in dfs_c)
+                if join_c:
+                    st.markdown(f"""<div class="card card-green" style="color:#f0f6fc;font-size:.85rem;margin-top:.5rem">
+                    <b>🔗 How sheets were combined:</b> The sheets were merged horizontally on the shared key
+                    column <code>{join_c[0]}</code> (outer join). Each audit record now has all question
+                    columns from both instruments side-by-side, allowing models to use the full combined
+                    feature set to make predictions. This is the approach described in question (g) of the case.
+                    </div>""", unsafe_allow_html=True)
+                elif same_c:
+                    st.markdown("""<div class="card card-yellow" style="color:#f0f6fc;font-size:.85rem;margin-top:.5rem">
+                    <b>🔗 How sheets were combined:</b> The sheets have identical structures and were stacked
+                    vertically (concat). This increases sample size but treats both sheets as one homogeneous
+                    dataset. For comparing OA vs TML instruments independently, run each sheet separately.
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.markdown("""<div class="card card-red" style="color:#f0f6fc;font-size:.85rem;margin-top:.5rem">
+                    <b>⚠️ Sheet combination:</b> Only the first sheet was used because the sheets have
+                    incompatible structures and no shared key column.
+                    </div>""", unsafe_allow_html=True)
+
+        # ── Model Performance Conclusions ────────────────────────
+        if clf_res:
+            st.markdown("---")
+            st.markdown("### 🏆 Model Performance Conclusions")
+
+            sorted_models = sorted(clf_res.items(), key=lambda x: x[1]["val_acc"], reverse=True)
+            best_name, best_r = sorted_models[0]
+            worst_name, worst_r = sorted_models[-1]
+
+            # Overfit analysis
+            overfit_models = [(m, r) for m, r in clf_res.items() if (r["train_acc"] - r["val_acc"]) > 0.12]
+            stable_models  = [(m, r) for m, r in clf_res.items() if abs(r["train_acc"] - r["val_acc"]) <= 0.08]
+
+            # Best model for fraud detection (balance sensitivity + accuracy)
+            # For fraud detection: high sensitivity is critical (don't miss fraudsters)
+            best_sens = max(clf_res.items(), key=lambda x: x[1].get("sensitivity", 0))
+            best_f1   = max(clf_res.items(), key=lambda x: x[1]["f1"])
+
+            st.markdown(f"""<div class="card card-green" style="color:#f0f6fc;font-size:.88rem">
+            <b>✅ Best overall accuracy:</b> <code>{best_name}</code> — {best_r['val_acc']:.1%} validation accuracy,
+            sensitivity {best_r.get('sensitivity',0):.1%}, specificity {best_r.get('specificity',0):.1%}<br><br>
+            <b>✅ Best sensitivity (catching fraud):</b> <code>{best_sens[0]}</code> — {best_sens[1].get('sensitivity',0):.1%}
+            (catches the most actual fraud cases — minimises missed fraudsters)<br><br>
+            <b>✅ Best F1-Score (balance):</b> <code>{best_f1[0]}</code> — F1={best_f1[1]['f1']:.3f}
+            (best trade-off between precision and recall)
+            </div>""", unsafe_allow_html=True)
+
+            if overfit_models:
+                names_ov = ", ".join(m for m,_ in overfit_models)
+                st.markdown(f"""<div class="card card-red" style="color:#f0f6fc;font-size:.88rem;margin-top:.5rem">
+                <b>⚠️ Overfitting concern:</b> {names_ov} show &gt;12% gap between training and validation
+                accuracy. These models have memorised training patterns rather than generalising. Avoid
+                relying on them for new, unseen audits without regularisation or more data.
+                </div>""", unsafe_allow_html=True)
+
+            if stable_models:
+                names_st = ", ".join(m for m,_ in stable_models)
+                st.markdown(f"""<div class="card card-accent" style="color:#f0f6fc;font-size:.88rem;margin-top:.5rem">
+                <b>✅ Well-generalising models:</b> {names_st} show consistent train vs validation performance
+                (&lt;8% gap). These are more trustworthy for deployment on new audit data.
+                </div>""", unsafe_allow_html=True)
+
+            # ── Recommendations ──────────────────────────────────
+            st.markdown("---")
+            st.markdown("### 💼 Recommendations for Real-World Use")
+
+            # Determine recommended model
+            # For fraud: prioritise sensitivity (catch fraud), penalise high overfit
+            score_dict = {}
+            for m, r in clf_res.items():
+                overfit_penalty = max(0, (r["train_acc"] - r["val_acc"]) - 0.05) * 2
+                score_dict[m] = r.get("sensitivity", 0) * 0.5 + r["val_acc"] * 0.3 + r["f1"] * 0.2 - overfit_penalty
+            recommended = max(score_dict, key=score_dict.get)
+            rec_r = clf_res[recommended]
+
+            st.markdown(f"""<div class="card card-purple" style="color:#f0f6fc;font-size:.9rem">
+            <b>🏅 Recommended Model for Deployment: {recommended}</b><br>
+            Validation accuracy: {rec_r['val_acc']:.1%} &nbsp;|&nbsp;
+            Sensitivity: {rec_r.get('sensitivity',0):.1%} &nbsp;|&nbsp;
+            F1: {rec_r['f1']:.3f}
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown("""<div class="card" style="color:#f0f6fc;font-size:.87rem;margin-top:.5rem">
+            <b>Why sensitivity matters most for fraud detection:</b><br>
+            In a fraud audit context, a <b>False Negative</b> (classifying a fraudulent company as clean)
+            is far more costly than a <b>False Positive</b> (flagging a clean company for extra review).
+            Therefore, the recommended model prioritises <b>high sensitivity</b> while maintaining
+            reasonable overall accuracy and F1-score to avoid excessive false alarms.
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown("""<div class="card card-yellow" style="color:#f0f6fc;font-size:.87rem;margin-top:.5rem">
+            <b>📋 Practical recommendations for OATML auditors:</b>
+            <ol style="color:#f0f6fc;margin:.5rem 0 0 1rem;line-height:1.8">
+              <li>Use the recommended model as a <b>first-pass screening tool</b> — flag high-probability
+                  fraud cases for deeper manual review rather than as a final verdict.</li>
+              <li>Set the <b>classification cutoff lower than 0.5</b> (e.g. 0.3–0.4) to increase
+                  sensitivity and catch more fraud cases at the cost of more false positives.</li>
+              <li>Combine OA and TML question sets (horizontal merge by audit ID) and run the
+                  composite logistic regression model — this typically outperforms either instrument alone.</li>
+              <li>Retrain the model periodically as new audits accumulate, since fraud patterns
+                  evolve over time.</li>
+              <li>Use <b>Feature Importance</b> results to identify which specific questions are
+                  most predictive — consider removing weak questions to simplify future questionnaires.</li>
+              <li>Treat the model's probability output (not just the 0/1 prediction) as a <b>risk score</b>
+                  to prioritise auditor attention — higher scores warrant more scrutiny.</li>
+            </ol>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Gemini AI Deep Insights ───────────────────────────
+            st.markdown("---")
+            st.markdown("### ✨ Gemini AI — Deep Insights")
+            st.markdown("""<div class="card" style="color:#b1bac4;font-size:.84rem;margin-bottom:.5rem">
+            Click the button below to ask Gemini AI for a personalised analysis narrative,
+            improvement suggestions, and business recommendations based on your actual results.
+            </div>""", unsafe_allow_html=True)
+
+            if "gemini_insight_clf" not in S:
+                S["gemini_insight_clf"] = ""
+
+            if st.button("✨ Generate AI Insights", type="primary", key="btn_gemini_clf"):
+                # Build metrics summary for Gemini
+                metrics_rows = []
+                for mn, mr in clf_res.items():
+                    metrics_rows.append(
+                        f"{mn}: val_acc={mr['val_acc']:.1%}, sensitivity={mr.get('sensitivity',0):.1%}, "
+                        f"specificity={mr.get('specificity',0):.1%}, F1={mr['f1']:.3f}, "
+                        f"train_acc={mr['train_acc']:.1%}"
+                    )
+                metrics_str = "\n".join(metrics_rows)
+
+                # Feature importances for best model
+                fi_best = feature_importances(clf_res.get(recommended, {}), R.get("feat_names",[]))
+                fi_str = ""
+                if fi_best is not None:
+                    top5 = fi_best.sort_values(ascending=False).head(5)
+                    fi_str = ", ".join(f"{k}={v:.3f}" for k, v in top5.items())
+
+                sheet_names_str = ", ".join(sel_sheets_c)
+                user_desc = S.get("context", {}).get("description", "")
+                user_goal = S.get("context", {}).get("goal", "")
+
+                prompt = f"""You are an expert data scientist and business analyst reviewing a fraud detection analysis.
+
+Dataset context:
+- Sheets analysed: {sheet_names_str}
+- User description: {user_desc}
+- User goal: {user_goal}
+- Target variable: {cfg.get('target','fraud')}
+- Balancing: {cfg.get('balance','oversample_random')}, seed={cfg.get('seed',42)}
+- Validation split: {cfg.get('test_size',0.3):.0%}
+
+Model performance results:
+{metrics_str}
+
+Recommended model: {recommended} (val_acc={rec_r['val_acc']:.1%}, sensitivity={rec_r.get('sensitivity',0):.1%})
+Top 5 most important features: {fi_str if fi_str else 'not available'}
+
+Please provide:
+1. **Summary** (2-3 sentences): What do these results tell us overall?
+2. **Best model analysis**: Why is {recommended} recommended? What are its strengths and weaknesses?
+3. **Improvement suggestions**: 3 specific, actionable ways to improve accuracy or sensitivity given these results.
+4. **Business recommendations**: 3 concrete steps OATML auditors should take based on these findings.
+5. **Risk warnings**: Any data quality, overfitting, or deployment risks to be aware of.
+
+Write in clear, professional English. Be specific to this fraud detection context. Use markdown formatting."""
+
+                with st.spinner("✨ Gemini is generating deep insights…"):
+                    insight = gemini_text(prompt, "Could not generate insights — Gemini unavailable.")
+                S["gemini_insight_clf"] = insight
+
+            if S.get("gemini_insight_clf"):
+                st.markdown(f"""<div class="card card-purple" style="color:#f0f6fc;font-size:.88rem;line-height:1.7">
+                <span style="color:#bc8cff;font-weight:700;font-size:.95rem">✨ Gemini AI Analysis</span><br><br>
+                {S['gemini_insight_clf'].replace(chr(10), '<br>')}
+                </div>""", unsafe_allow_html=True)
+
+        elif reg_res:
+            st.markdown("---")
+            st.markdown("### 🏆 Model Performance Conclusions")
+            best_reg_name = max(reg_res, key=lambda m: reg_res[m]["val_r2"])
+            br_r = reg_res[best_reg_name]
+            st.markdown(f"""<div class="card card-green" style="color:#f0f6fc;font-size:.88rem">
+            <b>✅ Best regression model:</b> <code>{best_reg_name}</code><br>
+            Validation R²: {br_r['val_r2']:.4f} &nbsp;|&nbsp; MAE: {br_r['mae']:.4g} &nbsp;|&nbsp; RMSE: {br_r['rmse']:.4g}
+            </div>""", unsafe_allow_html=True)
+            st.markdown("""<div class="card card-accent" style="color:#f0f6fc;font-size:.87rem;margin-top:.5rem">
+            <b>📋 General recommendations:</b> Use the model's predictions as estimates, not exact values.
+            Check residuals for systematic bias. If R² is below 0.5, consider adding more features or
+            transforming variables. Validate on a completely held-out test set before deployment.
+            </div>""", unsafe_allow_html=True)
+
+            # ── Gemini AI for Regression ──────────────────────────
+            st.markdown("---")
+            st.markdown("### ✨ Gemini AI — Deep Insights")
+            if "gemini_insight_reg" not in S:
+                S["gemini_insight_reg"] = ""
+            if st.button("✨ Generate AI Insights", type="primary", key="btn_gemini_reg"):
+                metrics_reg = "\n".join(
+                    f"{m}: val_R²={r['val_r2']:.4f}, MAE={r['mae']:.4g}, RMSE={r['rmse']:.4g}"
+                    for m, r in reg_res.items()
+                )
+                prompt_reg = f"""You are a data science expert. A regression analysis produced these results:
+{metrics_reg}
+
+Best model: {best_reg_name} (R²={br_r['val_r2']:.4f})
+User goal: {S.get('context',{}).get('goal','')}
+
+Provide: 1) A 2-sentence summary, 2) Why {best_reg_name} performed best, 3) Three improvement suggestions,
+4) Two business action items. Use markdown formatting."""
+                with st.spinner("✨ Generating insights…"):
+                    S["gemini_insight_reg"] = gemini_text(prompt_reg, "Gemini unavailable.")
+            if S.get("gemini_insight_reg"):
+                st.markdown(f"""<div class="card card-purple" style="color:#f0f6fc;font-size:.88rem;line-height:1.7">
+                <span style="color:#bc8cff;font-weight:700">✨ Gemini AI Analysis</span><br><br>
+                {S['gemini_insight_reg'].replace(chr(10), '<br>')}
+                </div>""", unsafe_allow_html=True)
+
+        else:
+            st.info("Run a classification or regression analysis to see conclusions and recommendations.")
 
     # ── Re-run with different params ──────────────────────────────
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
