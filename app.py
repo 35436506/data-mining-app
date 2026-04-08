@@ -154,7 +154,19 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 # ── Gemini setup ──────────────────────────────────────────────────────────────
 GEMINI_KEY = "AIzaSyAo9sIVLVkHQ_yQscblQbsZKstUhr6uNpY"
 genai.configure(api_key=GEMINI_KEY)
-gemini = genai.GenerativeModel("gemini-1.5-flash")
+
+# Try newest models in order of preference
+_GEMINI_CANDIDATES = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+]
+
+def _make_model(name):
+    return genai.GenerativeModel(name)
+
+gemini = _make_model(_GEMINI_CANDIDATES[0])   # default; auto-fallback in ask_gemini()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # METHOD CATALOGUE
@@ -302,11 +314,65 @@ def df_summary(df: pd.DataFrame) -> str:
 
 
 def ask_gemini(prompt: str) -> str:
-    try:
-        resp = gemini.generate_content(prompt)
-        return resp.text
-    except Exception as e:
-        return f"⚠️ Gemini error: {e}"
+    """Try each candidate model until one works."""
+    last_err = ""
+    for model_name in _GEMINI_CANDIDATES:
+        try:
+            mdl = _make_model(model_name)
+            resp = mdl.generate_content(prompt)
+            return resp.text
+        except Exception as e:
+            last_err = str(e)
+            if "quota" in last_err.lower():
+                break
+            continue
+    return f"⚠️ Gemini error (tried all models): {last_err}"
+
+
+def ask_gemini_multisheet(sheets: dict, user_goal: str) -> str:
+    """Deep multi-sheet analysis — understands relationships between datasets."""
+    ctx_parts = []
+    for sheet_name, df in sheets.items():
+        ctx_parts.append(
+            f"=== DATASET: {sheet_name} ===\n"
+            f"Shape: {df.shape[0]} rows x {df.shape[1]} columns\n"
+            f"Columns: {list(df.columns)}\n"
+            f"Types:\n{df.dtypes.to_string()}\n"
+            f"Missing values:\n{df.isnull().sum().to_string()}\n"
+            f"Sample (top 3 rows):\n{df.head(3).to_string()}\n"
+            f"Statistics:\n{df.describe(include='all').to_string()}\n"
+        )
+    all_ctx = "\n\n".join(ctx_parts)
+
+    prompt = f"""You are an expert data scientist and fraud analytics consultant.
+
+The user has provided {len(sheets)} dataset(s)/sheet(s):
+{all_ctx}
+
+USER'S GOAL / QUESTION:
+{user_goal}
+
+Please provide a comprehensive analysis covering:
+
+1. **Understanding of the datasets**: What does each sheet contain? What do columns represent? Are they questionnaire scores, binary answers, categorical items?
+
+2. **Key columns identified**: Which column is most likely the fraud label/target? Which columns are features (questionnaire items)?
+
+3. **Cross-dataset comparison** (if multiple sheets): How do the datasets relate? Are the questionnaires measuring the same constructs? Do they have overlapping or complementary columns?
+
+4. **Recommended approach**: Given the goal, what specific data mining strategy do you recommend?
+   - Which methods from [Logistic Regression, Random Forest, SVM, Neural Networks (MLP), LDA, KNN, Classification Trees, Naive Bayes] would be best?
+   - Should datasets be merged or compared separately first?
+   - How to handle class imbalance (if fraud cases are rare — use SMOTE or Random Oversampling)?
+   - Feature importance: which questionnaire items matter most?
+
+5. **Actionable next steps**: Step-by-step instructions tailored to this specific situation.
+
+6. **Important data quality issues**: Missing values, encoding needs, scaling requirements.
+
+Be specific, practical, and refer to actual column names you see in the data. Respond in the same language the user used. Format clearly with headers."""
+
+    return ask_gemini(prompt)
 
 
 def encode_df(df: pd.DataFrame):
@@ -691,9 +757,13 @@ user_goal = st.text_area(
 
 if st.button("🔎 Analyse Goal with AI"):
     with st.spinner("Gemini is reading your data and goal…"):
-        summary = df_summary(df_active)
-        prompt = f"""
-You are a data mining expert assistant.
+        # Use multi-sheet analysis if multiple datasets loaded, else single
+        all_sheets_loaded = st.session_state.get("sheets", {})
+        if len(all_sheets_loaded) > 1:
+            st.session_state["ai_suggestion"] = ask_gemini_multisheet(all_sheets_loaded, user_goal)
+        else:
+            summary = df_summary(df_active)
+            prompt = f"""You are a data mining expert assistant.
 
 DATASET SUMMARY:
 {summary}
@@ -703,16 +773,15 @@ USER GOAL:
 
 Tasks:
 1. Identify the user's analytical purpose (classification, prediction/regression, association rules, clustering, class balancing, or a combination).
-2. List the 2-3 most suitable data mining methods from this list:
-   {list(METHODS.keys())}
-   Give the method name EXACTLY as written, then a brief reason.
-3. Identify the most likely TARGET column (for supervised methods) and the best FEATURE columns.
-4. Point out any data quality issues (missing values, imbalanced classes, wrong types).
-5. Suggest any preprocessing steps.
+2. List the 2-3 most suitable data mining methods from this list: {list(METHODS.keys())}
+   Give the method name EXACTLY as written above, then a brief reason.
+3. Identify the most likely TARGET column (for supervised methods) and the best FEATURE columns. Reference actual column names.
+4. Point out data quality issues (missing values, imbalanced classes, wrong types, scaling needed).
+5. Suggest preprocessing steps.
+6. If this looks like fraud detection, recommend SMOTE to handle class imbalance.
 
-Respond in the same language the user used. Keep it concise and practical.
-"""
-        st.session_state["ai_suggestion"] = ask_gemini(prompt)
+Respond in the same language the user used. Use clear headers. Be specific and practical."""
+            st.session_state["ai_suggestion"] = ask_gemini(prompt)
 
 if st.session_state["ai_suggestion"]:
     st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">Gemini AI Analysis</b><br><br>' +
