@@ -662,7 +662,7 @@ def fig_to_st(fig):
 @st.cache_data(show_spinner=False)
 def detect_data_problems(df_json: str) -> list[dict]:
     """Detect data quality issues. Cached so it only re-runs when data changes."""
-    df = pd.read_json(df_json, orient="split")
+    df = pd.read_json(io.StringIO(df_json), orient="split")
     problems = []
     n = len(df)
 
@@ -735,7 +735,7 @@ def detect_data_problems(df_json: str) -> list[dict]:
 @st.cache_data(show_spinner=False)
 def apply_fix_missing(df_json: str) -> tuple[str, str]:
     """Impute missing values. Returns (new_df_json, summary_message)."""
-    df = pd.read_json(df_json, orient="split")
+    df = pd.read_json(io.StringIO(df_json), orient="split")
     before_nulls = df.isnull().sum().sum()
     for col in df.columns:
         if df[col].isnull().any():
@@ -746,24 +746,28 @@ def apply_fix_missing(df_json: str) -> tuple[str, str]:
                 df[col] = df[col].fillna(mode_val[0] if len(mode_val) else "Unknown")
     after_nulls = df.isnull().sum().sum()
     msg = f"Fixed {before_nulls - after_nulls} missing values (numeric → mean, text → mode)."
-    return df.to_json(orient="split"), msg
+    buf = io.StringIO()
+    df.to_json(buf, orient="split")
+    return buf.getvalue(), msg
 
 
 @st.cache_data(show_spinner=False)
 def apply_remove_duplicates(df_json: str) -> tuple[str, str]:
     """Remove duplicate rows. Returns (new_df_json, summary_message)."""
-    df = pd.read_json(df_json, orient="split")
+    df = pd.read_json(io.StringIO(df_json), orient="split")
     before = len(df)
     df = df.drop_duplicates()
     after = len(df)
     msg = f"Removed {before - after} duplicate rows. Before: {before} rows → After: {after} rows."
-    return df.to_json(orient="split"), msg
+    buf = io.StringIO()
+    df.to_json(buf, orient="split")
+    return buf.getvalue(), msg
 
 
 @st.cache_data(show_spinner=False)
 def apply_winsorize(df_json: str) -> tuple[str, str]:
     """Cap extreme outliers at 3×IQR. Returns (new_df_json, summary_message)."""
-    df = pd.read_json(df_json, orient="split")
+    df = pd.read_json(io.StringIO(df_json), orient="split")
     capped = 0
     for col in df.select_dtypes(include=[np.number]).columns:
         q1, q3 = df[col].quantile(0.25), df[col].quantile(0.75)
@@ -774,7 +778,9 @@ def apply_winsorize(df_json: str) -> tuple[str, str]:
             df[col] = df[col].clip(lower=lo, upper=hi)
             capped += n_cap
     msg = f"Capped {capped} extreme outlier values across all numeric columns (3×IQR Winsorization)."
-    return df.to_json(orient="split"), msg
+    buf = io.StringIO()
+    df.to_json(buf, orient="split")
+    return buf.getvalue(), msg
 
 
 def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.DataFrame:
@@ -790,7 +796,9 @@ def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.D
 
     # Initialise cleaned copy in session state
     if prep_key not in st.session_state:
-        st.session_state[prep_key] = df_active.to_json(orient="split")
+        buf = io.StringIO()
+        df_active.to_json(buf, orient="split")
+        st.session_state[prep_key] = buf.getvalue()
     if prep_log not in st.session_state:
         st.session_state[prep_log] = []
 
@@ -859,7 +867,7 @@ def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.D
             )
 
     # ── Before / After comparison ─────────────────────────────────────────────
-    current_df = pd.read_json(current_df_json, orient="split")
+    current_df = pd.read_json(io.StringIO(current_df_json), orient="split")
     if log:
         st.markdown("**📊 Trước / Sau — Before / After Comparison:**")
         bcol, acol = st.columns(2)
