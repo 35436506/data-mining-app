@@ -487,7 +487,7 @@ def ask_gemini_multisheet(sheets: dict, user_goal: str) -> str:
         )
     all_ctx = "\n\n".join(ctx_parts)
 
-    prompt = f"""You are an expert data scientist and fraud analytics consultant.
+    prompt = f"""You are an expert data scientist and data mining consultant.
 
 The user has provided {len(sheets)} dataset(s)/sheet(s):
 {all_ctx}
@@ -497,17 +497,17 @@ USER'S GOAL / QUESTION:
 
 Please provide a comprehensive analysis covering:
 
-1. **Understanding of the datasets**: What does each sheet contain? What do columns represent? Are they questionnaire scores, binary answers, categorical items?
+1. **Understanding of the datasets**: What does each sheet contain? What do columns represent? Are they scores, binary answers, categorical items, or continuous measurements?
 
-2. **Key columns identified**: Which column is most likely the fraud label/target? Which columns are features (questionnaire items)?
+2. **Key columns identified**: Which column is most likely the target/dependent variable? Which columns are features/independent variables?
 
-3. **Cross-dataset comparison** (if multiple sheets): How do the datasets relate? Are the questionnaires measuring the same constructs? Do they have overlapping or complementary columns?
+3. **Cross-dataset comparison** (if multiple sheets): How do the datasets relate? Do they have overlapping or complementary columns?
 
 4. **Recommended approach**: Given the goal, what specific data mining strategy do you recommend?
    - Which methods from [Logistic Regression, Random Forest, SVM, Neural Networks (MLP), LDA, KNN, Classification Trees, Naive Bayes] would be best?
    - Should datasets be merged or compared separately first?
-   - How to handle class imbalance (if fraud cases are rare — use SMOTE or Random Oversampling)?
-   - Feature importance: which questionnaire items matter most?
+   - How to handle class imbalance if any minority class exists (use SMOTE or Random Oversampling)?
+   - Feature importance: which variables matter most?
 
 5. **Actionable next steps**: Step-by-step instructions tailored to this specific situation.
 
@@ -527,7 +527,7 @@ Respond in the same language the user used."""
 def encode_df(df: pd.DataFrame):
     df = df.copy()
     le = LabelEncoder()
-    for col in df.select_dtypes(include="object").columns:
+    for col in df.select_dtypes(include=["object","string"]).columns:
         df[col] = le.fit_transform(df[col].astype(str))
     return df
 
@@ -535,7 +535,7 @@ def encode_df(df: pd.DataFrame):
 def suggest_target_column(df: pd.DataFrame) -> str | None:
     """Heuristically guess the most likely target/dependent column."""
     TARGET_KEYWORDS = [
-        "label", "target", "class", "churn", "fraud", "default", "outcome",
+        "label", "target", "class", "churn", "default", "outcome",
         "result", "status", "y", "output", "dependent", "response",
         "predict", "category", "nhãn", "kết_quả", "mục_tiêu",
     ]
@@ -624,7 +624,7 @@ def show_algorithm_flowchart(method: str):
         "Random Oversampling": {
             "steps": ["📥 Imbalanced dataset (e.g. 90% Class 0, 10% Class 1)", "🔍 Identify minority class samples", "🔁 Randomly duplicate minority samples with replacement", "✅ Output: balanced dataset for training"],
             "params": "**random_state=42** — reproducibility. No other parameters.",
-            "note": "Use before classification when classes are heavily imbalanced (e.g. fraud detection).",
+            "note": "Use before classification when classes are heavily imbalanced (e.g. rare events, minority classes).",
         },
         "SMOTE": {
             "steps": ["📥 Imbalanced dataset", "🔍 For each minority sample, find K nearest minority neighbours", "🧬 Generate synthetic point along the line between sample and a neighbour", "✅ Output: richer balanced dataset"],
@@ -692,7 +692,7 @@ def detect_data_problems(df_json: str) -> list[dict]:
                     "dtype": "numeric",
                 })
 
-    text_cols = df.select_dtypes(include="object").columns.tolist()
+    text_cols = df.select_dtypes(include=["object","string"]).columns.tolist()
     for col in text_cols:
         problems.append({
             "col": col, "type": "encoding", "severity": "info",
@@ -783,6 +783,36 @@ def apply_winsorize(df_json: str) -> tuple[str, str]:
     return buf.getvalue(), msg
 
 
+@st.cache_data(show_spinner=False)
+def apply_encode_text(df_json: str) -> tuple[str, str, dict]:
+    """
+    Label-encode all text/object columns.
+    Returns (new_df_json, summary_message, mapping_dict).
+    mapping_dict = {col: {original_value: encoded_int, ...}, ...}
+    """
+    df = pd.read_json(io.StringIO(df_json), orient="split")
+    text_cols = df.select_dtypes(include=["object","string"]).columns.tolist()
+    if not text_cols:
+        buf = io.StringIO()
+        df.to_json(buf, orient="split")
+        return buf.getvalue(), "No text columns to encode — dataset is already fully numeric.", {}
+
+    mapping = {}
+    le = LabelEncoder()
+    for col in text_cols:
+        original = df[col].astype(str)
+        encoded  = le.fit_transform(original)
+        mapping[col] = {str(orig): int(enc) for orig, enc in zip(le.classes_, le.transform(le.classes_))}
+        df[col] = encoded
+
+    msg = (f"Label-encoded {len(text_cols)} text column(s): "
+           + ", ".join(f'"{c}"' for c in text_cols)
+           + ". Each unique text value is now an integer. See the mapping table below.")
+    buf = io.StringIO()
+    df.to_json(buf, orient="split")
+    return buf.getvalue(), msg, mapping
+
+
 def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.DataFrame:
     """
     Renders the full Step 1 preprocessing UI.
@@ -825,11 +855,28 @@ def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.D
 
     # ── Action buttons ────────────────────────────────────────────────────────
     st.markdown("**🔧 Áp dụng sửa lỗi / Apply Fixes:**")
-    fix_cols = st.columns(3)
+
+    # Detect what's relevant so we can show/grey-out buttons contextually
+    current_df_preview = pd.read_json(io.StringIO(current_df_json), orient="split")
+    has_missing  = current_df_preview.isnull().any().any()
+    has_dups     = current_df_preview.duplicated().any()
+    has_outliers = any(
+        ((current_df_preview[c] < current_df_preview[c].quantile(0.25) - 3*(current_df_preview[c].quantile(0.75)-current_df_preview[c].quantile(0.25))) |
+         (current_df_preview[c] > current_df_preview[c].quantile(0.75) + 3*(current_df_preview[c].quantile(0.75)-current_df_preview[c].quantile(0.25)))).any()
+        for c in current_df_preview.select_dtypes(include=[np.number]).columns
+        if (current_df_preview[c].quantile(0.75) - current_df_preview[c].quantile(0.25)) > 0
+    )
+    has_text = len(current_df_preview.select_dtypes(include=["object","string"]).columns) > 0
+
+    fix_cols = st.columns(4)
 
     with fix_cols[0]:
-        if st.button("🩹 Fix Missing Values\n(Mean / Mode)", key=f"fix_miss_{sheet_name}",
-                     help="Numeric columns → filled with mean; text columns → filled with mode"):
+        btn_label = "🩹 Fix Missing Values\n(Mean / Mode)"
+        if not has_missing:
+            btn_label = "✅ No Missing Values"
+        if st.button(btn_label, key=f"fix_miss_{sheet_name}",
+                     help="Numeric → mean; text → mode. Greys out when no missing values remain.",
+                     disabled=not has_missing):
             new_json, msg = apply_fix_missing(current_df_json)
             st.session_state[prep_key] = new_json
             st.session_state[prep_log].append(("🩹 Missing Values", msg))
@@ -837,8 +884,12 @@ def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.D
             st.rerun()
 
     with fix_cols[1]:
-        if st.button("🗑️ Remove Duplicates", key=f"fix_dup_{sheet_name}",
-                     help="Drops rows that are identical across all columns"):
+        btn_label = "🗑️ Remove Duplicates"
+        if not has_dups:
+            btn_label = "✅ No Duplicates"
+        if st.button(btn_label, key=f"fix_dup_{sheet_name}",
+                     help="Drops rows that are identical across all columns.",
+                     disabled=not has_dups):
             new_json, msg = apply_remove_duplicates(current_df_json)
             st.session_state[prep_key] = new_json
             st.session_state[prep_log].append(("🗑️ Duplicates", msg))
@@ -846,13 +897,50 @@ def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.D
             st.rerun()
 
     with fix_cols[2]:
-        if st.button("📐 Cap Outliers\n(3×IQR Winsorize)", key=f"fix_out_{sheet_name}",
-                     help="Clips extreme values to 3×IQR boundary — preserves all rows"):
+        btn_label = "📐 Cap Outliers\n(3×IQR)"
+        if not has_outliers:
+            btn_label = "✅ No Extreme Outliers"
+        if st.button(btn_label, key=f"fix_out_{sheet_name}",
+                     help="Clips extreme values to 3×IQR boundary — preserves all rows.",
+                     disabled=not has_outliers):
             new_json, msg = apply_winsorize(current_df_json)
             st.session_state[prep_key] = new_json
             st.session_state[prep_log].append(("📐 Outliers", msg))
             detect_data_problems.clear()
             st.rerun()
+
+    with fix_cols[3]:
+        enc_key = f"enc_mapping_{sheet_name}"
+        btn_label = "🔤 Encode Text Columns\n(Label Encoding)"
+        if not has_text:
+            btn_label = "✅ No Text Columns"
+        if st.button(btn_label, key=f"fix_enc_{sheet_name}",
+                     help="Converts every text/category column to integers so ML models can use them. "
+                          "A mapping table is shown so you can interpret the numbers.",
+                     disabled=not has_text):
+            new_json, msg, mapping = apply_encode_text(current_df_json)
+            st.session_state[prep_key] = new_json
+            st.session_state[enc_key]  = mapping
+            st.session_state[prep_log].append(("🔤 Encoding", msg))
+            detect_data_problems.clear()
+            st.rerun()
+
+    # ── Show encoding mapping if available ───────────────────────────────────
+    enc_key = f"enc_mapping_{sheet_name}"
+    if st.session_state.get(enc_key):
+        mapping = st.session_state[enc_key]
+        with st.expander("🗂️ Encoding Mapping — what each number means", expanded=False):
+            st.caption(
+                "Each text value has been replaced by an integer. "
+                "Use this table to understand what the numbers mean in your results."
+            )
+            for col, val_map in mapping.items():
+                st.markdown(f"**`{col}`**")
+                map_df = pd.DataFrame(
+                    list(val_map.items()), columns=["Original Text", "Encoded Integer"]
+                ).sort_values("Encoded Integer")
+                st.dataframe(map_df, use_container_width=True, height=min(200, 35 * len(map_df) + 38))
+                st.markdown("")
 
     # ── Change log ────────────────────────────────────────────────────────────
     log = st.session_state[prep_log]
@@ -1391,16 +1479,116 @@ with st.sidebar:
                     unsafe_allow_html=True)
 
         if len(all_sheets) > 1:
-            st.markdown('<p class="section-header">🔗 Merge Datasets</p>', unsafe_allow_html=True)
-            merge_on = st.text_input("Cột khóa chung (để gộp) / Common key column", "")
-            if st.button("Tự động gộp tất cả / Auto-merge all") and merge_on:
-                merged = None
-                for df in all_sheets.values():
-                    if merge_on in df.columns:
-                        merged = df if merged is None else pd.merge(merged, df, on=merge_on, how="outer")
-                if merged is not None:
-                    st.session_state["sheets"]["🔗 Merged"] = merged
-                    st.success(f"Merged → {merged.shape}")
+            st.markdown('<p class="section-header">🔗 Merge / Link Datasets</p>', unsafe_allow_html=True)
+
+            # ── Auto-analyse shared columns across all sheets ──────────────────
+            sheet_cols = {name: set(df.columns.tolist()) for name, df in all_sheets.items()}
+            all_col_names = [c for cols in sheet_cols.values() for c in cols]
+            from collections import Counter
+            col_freq = Counter(all_col_names)
+            shared_in_all   = [c for c, cnt in col_freq.items() if cnt == len(all_sheets)]
+            shared_in_some  = [c for c, cnt in col_freq.items() if 1 < cnt < len(all_sheets)]
+
+            if shared_in_all:
+                st.markdown(
+                    f'<div style="background:#1a3a2a;border:1px solid #3fb950;border-radius:8px;'
+                    f'padding:8px 12px;color:#e6edf3;font-size:0.82rem;margin-bottom:6px">'
+                    f'✅ <b style="color:#3fb950">Columns in ALL {len(all_sheets)} files:</b> '
+                    f'{", ".join(f"<code>{c}</code>" for c in shared_in_all[:8])}'
+                    f'{"..." if len(shared_in_all) > 8 else ""}<br>'
+                    f'<span style="color:#8b949e">Any of these can be used as a merge key.</span></div>',
+                    unsafe_allow_html=True,
+                )
+            elif shared_in_some:
+                st.markdown(
+                    f'<div style="background:#3a2d10;border:1px solid #d29922;border-radius:8px;'
+                    f'padding:8px 12px;color:#e6edf3;font-size:0.82rem;margin-bottom:6px">'
+                    f'⚠️ <b style="color:#d29922">No column shared across ALL files.</b><br>'
+                    f'Partial matches (2+ files): '
+                    f'{", ".join(f"<code>{c}</code>" for c in shared_in_some[:6])}<br>'
+                    f'<span style="color:#8b949e">You can still merge the files that share a column. '
+                    f'Files without the key column will be excluded.</span></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div style="background:#3d1f1f;border:1px solid #f85149;border-radius:8px;'
+                    f'padding:8px 12px;color:#e6edf3;font-size:0.82rem;margin-bottom:6px">'
+                    f'❌ <b style="color:#f85149">No shared columns found across any files.</b><br>'
+                    f'These files cannot be merged by a common key. '
+                    f'You can still analyse each file individually. '
+                    f'Consider using the AI Goal Analysis to understand how each dataset relates.</div>',
+                    unsafe_allow_html=True,
+                )
+
+            # ── Per-sheet column list for reference ───────────────────────────
+            with st.expander("📋 Column overview per file", expanded=False):
+                for sname, scols in sheet_cols.items():
+                    st.markdown(
+                        f'<div style="color:#8b949e;font-size:0.78rem;margin-bottom:4px">'
+                        f'<b style="color:#c9d1d9">{sname}</b> — '
+                        + ", ".join(f'<code style="color:#58a6ff">{c}</code>' for c in sorted(scols))
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            # ── Merge controls ────────────────────────────────────────────────
+            candidate_keys = shared_in_all + shared_in_some
+            if candidate_keys:
+                merge_on = st.selectbox(
+                    "Cột khóa để gộp / Merge key column",
+                    options=candidate_keys,
+                    help="Select the column that links your files together (e.g. a machine ID, employee ID, date).",
+                )
+            else:
+                merge_on = st.text_input(
+                    "Cột khóa để gộp / Merge key column (manual)",
+                    "",
+                    help="No shared columns detected. Type a column name if you know one exists.",
+                )
+
+            merge_how = st.selectbox(
+                "Merge type / Kiểu gộp",
+                ["outer (keep all rows)", "inner (only matching rows)", "left", "right"],
+                help="outer = keep every row from every file even if no match. inner = only rows that match in ALL files.",
+            )
+            merge_how_val = merge_how.split(" ")[0]
+
+            if st.button("🔗 Merge all files / Gộp tất cả tệp", key="do_merge"):
+                if not merge_on:
+                    st.error("Please specify a merge key column.")
+                else:
+                    eligible = {n: d for n, d in all_sheets.items() if merge_on in d.columns}
+                    skipped  = [n for n in all_sheets if n not in eligible]
+
+                    if len(eligible) < 2:
+                        st.error(
+                            f'Column "{merge_on}" was only found in {len(eligible)} file(s) — '
+                            f'need at least 2 to merge. '
+                            + (f'Skipped: {", ".join(skipped)}' if skipped else "")
+                        )
+                    else:
+                        merged = None
+                        for name, df in eligible.items():
+                            if merged is None:
+                                merged = df
+                            else:
+                                # Suffix duplicated non-key columns to avoid silent overwriting
+                                merged = pd.merge(merged, df, on=merge_on, how=merge_how_val,
+                                                  suffixes=("", f"__{name[:8]}"))
+                        if merged is not None:
+                            merged_key = "🔗 Merged Dataset"
+                            st.session_state["sheets"][merged_key] = merged
+                            st.session_state["active_sheet"] = merged_key
+                            success_msg = (
+                                f"✅ Merged {len(eligible)} files on "
+                                f'"{merge_on}" ({merge_how_val}) → '
+                                f"{merged.shape[0]:,} rows × {merged.shape[1]} cols"
+                            )
+                            if skipped:
+                                success_msg += f"\n⚠️ Skipped (no key column): {', '.join(skipped)}"
+                            st.success(success_msg)
+                            st.rerun()
 
     st.markdown("---")
     st.markdown('<p class="section-header">🔑 AI API Keys</p>', unsafe_allow_html=True)
@@ -1540,7 +1728,7 @@ Tasks:
 3. Identify the most likely TARGET column (for supervised methods) and the best FEATURE columns. Reference actual column names.
 4. Point out data quality issues (missing values, imbalanced classes, wrong types, scaling needed).
 5. Suggest preprocessing steps.
-6. If this looks like fraud detection, recommend SMOTE to handle class imbalance.
+6. If the target column has a heavily imbalanced class distribution, recommend SMOTE to handle class imbalance.
 
 IMPORTANT FORMATTING RULES: Do NOT use **, *, #, or bullet - symbols. Write plain numbered paragraphs only.
 End with a SHORT SUMMARY of the top 2-3 recommended methods.
@@ -1565,7 +1753,14 @@ if st.session_state["ai_suggestion"]:
         col_lang1, col_lang2 = st.columns([1, 1])
         with col_lang1:
             st.markdown("**English Analysis**")
-            st.text(clean[:3000] + ("..." if len(clean) > 3000 else ""))
+            st.markdown(
+                f'<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;'
+                f'padding:1rem 1.2rem;color:#e6edf3;font-size:0.88rem;line-height:1.7;'
+                f'white-space:pre-wrap;word-break:break-word;font-family:\'DM Sans\',sans-serif;">'
+                f'{clean[:3000].replace(chr(60), "&lt;").replace(chr(62), "&gt;")}'
+                f'{"..." if len(clean) > 3000 else ""}</div>',
+                unsafe_allow_html=True,
+            )
         with col_lang2:
             st.markdown("**Phân tích (Tiếng Việt)**")
             if st.button("Dịch sang Tiếng Việt", key="translate_btn"):
@@ -1583,7 +1778,14 @@ Text to translate:
                 vn_clean = _re.sub(r"\*{1,3}(.*?)\*{1,3}", r"\1", vn_text)
                 vn_clean = _re.sub(r"^#+\s*", "", vn_clean, flags=_re.MULTILINE)
                 vn_clean = _re.sub(r"^[-•]\s+", "  ", vn_clean, flags=_re.MULTILINE)
-                st.text(vn_clean)
+                vn_clean = _re.sub(r"\n{3,}", "\n\n", vn_clean)
+                st.markdown(
+                    f'<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;'
+                    f'padding:1rem 1.2rem;color:#e6edf3;font-size:0.88rem;line-height:1.7;'
+                    f'white-space:pre-wrap;word-break:break-word;font-family:\'DM Sans\',sans-serif;">'
+                    f'{vn_clean.replace(chr(60), "&lt;").replace(chr(62), "&gt;")}</div>',
+                    unsafe_allow_html=True,
+                )
             else:
                 st.info("Nhấn nút phía trên để dịch sang Tiếng Việt")
 
@@ -1827,7 +2029,7 @@ Your analysis must cover ALL of the following points:
 2. Performance assessment: Is Accuracy / F1 / AUC strong or weak? Flag any AUC below 0.7 clearly.
 3. Limitations of {method} specific to this dataset — for example: independence assumptions (Naive Bayes, Logistic Regression), interpretability constraints, sensitivity to class imbalance, overfitting risk.
 4. Feature importance: if coefficients or importances were computed, discuss which features appear most influential.
-5. Class imbalance: if one class is much rarer (e.g. fraud detection), recommend SMOTE.
+5. Class imbalance: if one class is much rarer than others, recommend SMOTE.
 6. Concrete next steps: what should the user do after this result?
 7. One or two alternative methods and why they might perform better here.
 
@@ -1848,9 +2050,15 @@ Respond in the same language the user used (default English)."""
     interp_clean = _re2.sub(r"`{1,3}", "", interp_clean)
     interp_clean = _re2.sub(r"\n{3,}", "\n\n", interp_clean)
 
-    st.markdown('<div class="ai-bubble">🤖 <b style="color:#58a6ff">AI Interpretation</b></div>',
-                unsafe_allow_html=True)
-    st.text(interp_clean)
+    st.markdown(
+        f'<div class="ai-bubble">'
+        f'🤖 <b style="color:#58a6ff">AI Interpretation</b><br><br>'
+        f'<div style="color:#ffffff;font-size:0.9rem;line-height:1.75;white-space:pre-wrap;'
+        f'word-break:break-word;font-family:\'DM Sans\',sans-serif;">'
+        f'{interp_clean.replace(chr(60), "&lt;").replace(chr(62), "&gt;")}'
+        f'</div></div>',
+        unsafe_allow_html=True,
+    )
 
 # ── Comparison Table (always visible when populated) ─────────────────────────
 if st.session_state.get("comparison_results"):
