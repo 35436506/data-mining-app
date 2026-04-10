@@ -105,12 +105,43 @@ button[data-baseweb="tab"][aria-selected="true"] { color: #58a6ff !important; }
     color: #8b949e;
 }
 .ai-bubble {
-    background: linear-gradient(135deg, #1f2d3d, #1a2235);
-    border: 1px solid #58a6ff44;
+    background: #1c2333;
+    border: 1px solid #58a6ff;
     border-radius: 12px;
     padding: 1.2rem 1.4rem;
     margin-bottom: 1rem;
+    color: #ffffff !important;
 }
+.ai-bubble * { color: #ffffff !important; }
+.ai-bubble pre, .ai-bubble .stText {
+    color: #e6edf3 !important;
+    background: transparent !important;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.9rem;
+    line-height: 1.7;
+}
+.preprocess-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 0.7rem;
+}
+.problem-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+    color: #e6edf3;
+    font-size: 0.88rem;
+}
+.problem-row:last-child { border-bottom: none; }
+.chip-warn  { background:#3a2d10; color:#d29922; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:600; }
+.chip-err   { background:#3d1f1f; color:#f85149; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:600; }
+.chip-info  { background:#1f3a5f; color:#58a6ff; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:600; }
+.chip-ok    { background:#1a3a2a; color:#3fb950; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:600; }
 .section-header {
     font-family: 'Space Mono', monospace;
     font-size: 0.75rem;
@@ -625,6 +656,248 @@ def fig_to_st(fig):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PREPROCESSING MODULE
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False)
+def detect_data_problems(df_json: str) -> list[dict]:
+    """Detect data quality issues. Cached so it only re-runs when data changes."""
+    df = pd.read_json(df_json, orient="split")
+    problems = []
+    n = len(df)
+
+    for col in df.columns:
+        null_pct = df[col].isnull().mean()
+        if null_pct > 0:
+            sev = "err" if null_pct > 0.3 else "warn"
+            dtype = "numeric" if pd.api.types.is_numeric_dtype(df[col]) else "categorical"
+            problems.append({
+                "col": col, "type": "missing", "severity": sev,
+                "msg": f'Column "{col}" has {null_pct:.1%} missing values ({int(null_pct*n)} rows)',
+                "fix": f"Fill with {'mean' if dtype == 'numeric' else 'mode'}",
+                "dtype": dtype,
+            })
+
+    for col in df.select_dtypes(include=[np.number]).columns:
+        q1, q3 = df[col].quantile(0.25), df[col].quantile(0.75)
+        iqr = q3 - q1
+        if iqr > 0:
+            outlier_mask = (df[col] < q1 - 3 * iqr) | (df[col] > q3 + 3 * iqr)
+            n_out = outlier_mask.sum()
+            if n_out > 0:
+                problems.append({
+                    "col": col, "type": "outlier", "severity": "warn",
+                    "msg": f'Column "{col}" has {n_out} extreme outliers (3×IQR rule, {n_out/n:.1%} of rows)',
+                    "fix": "Cap to 3×IQR (Winsorize)",
+                    "dtype": "numeric",
+                })
+
+    text_cols = df.select_dtypes(include="object").columns.tolist()
+    for col in text_cols:
+        problems.append({
+            "col": col, "type": "encoding", "severity": "info",
+            "msg": f'Column "{col}" is text — needs encoding for ML models',
+            "fix": "Label Encoding (auto-applied at training)",
+            "dtype": "categorical",
+        })
+
+    dups = df.duplicated().sum()
+    if dups > 0:
+        problems.append({
+            "col": "ALL", "type": "duplicate", "severity": "warn",
+            "msg": f"{dups} duplicate rows found ({dups/n:.1%} of data)",
+            "fix": "Remove duplicates",
+            "dtype": "row",
+        })
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    if len(numeric_cols) > 1:
+        ranges = df[numeric_cols].max() - df[numeric_cols].min()
+        if ranges.max() > 0 and (ranges.max() / (ranges.min() + 1e-9)) > 100:
+            problems.append({
+                "col": "NUMERIC", "type": "scale", "severity": "info",
+                "msg": "Numeric columns have very different scales — scaling recommended",
+                "fix": "StandardScaler (auto-applied at training)",
+                "dtype": "numeric",
+            })
+
+    if not problems:
+        problems.append({
+            "col": "", "type": "ok", "severity": "ok",
+            "msg": "No major data problems detected. Your dataset looks clean!",
+            "fix": "",
+            "dtype": "",
+        })
+
+    return problems
+
+
+@st.cache_data(show_spinner=False)
+def apply_fix_missing(df_json: str) -> tuple[str, str]:
+    """Impute missing values. Returns (new_df_json, summary_message)."""
+    df = pd.read_json(df_json, orient="split")
+    before_nulls = df.isnull().sum().sum()
+    for col in df.columns:
+        if df[col].isnull().any():
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].fillna(df[col].mean())
+            else:
+                mode_val = df[col].mode()
+                df[col] = df[col].fillna(mode_val[0] if len(mode_val) else "Unknown")
+    after_nulls = df.isnull().sum().sum()
+    msg = f"Fixed {before_nulls - after_nulls} missing values (numeric → mean, text → mode)."
+    return df.to_json(orient="split"), msg
+
+
+@st.cache_data(show_spinner=False)
+def apply_remove_duplicates(df_json: str) -> tuple[str, str]:
+    """Remove duplicate rows. Returns (new_df_json, summary_message)."""
+    df = pd.read_json(df_json, orient="split")
+    before = len(df)
+    df = df.drop_duplicates()
+    after = len(df)
+    msg = f"Removed {before - after} duplicate rows. Before: {before} rows → After: {after} rows."
+    return df.to_json(orient="split"), msg
+
+
+@st.cache_data(show_spinner=False)
+def apply_winsorize(df_json: str) -> tuple[str, str]:
+    """Cap extreme outliers at 3×IQR. Returns (new_df_json, summary_message)."""
+    df = pd.read_json(df_json, orient="split")
+    capped = 0
+    for col in df.select_dtypes(include=[np.number]).columns:
+        q1, q3 = df[col].quantile(0.25), df[col].quantile(0.75)
+        iqr = q3 - q1
+        if iqr > 0:
+            lo, hi = q1 - 3 * iqr, q3 + 3 * iqr
+            n_cap = ((df[col] < lo) | (df[col] > hi)).sum()
+            df[col] = df[col].clip(lower=lo, upper=hi)
+            capped += n_cap
+    msg = f"Capped {capped} extreme outlier values across all numeric columns (3×IQR Winsorization)."
+    return df.to_json(orient="split"), msg
+
+
+def show_preprocessing_section(df_active: pd.DataFrame, sheet_name: str) -> pd.DataFrame:
+    """
+    Renders the full Step 1 preprocessing UI.
+    Returns the (possibly modified) DataFrame for downstream use.
+    """
+    st.markdown('<div class="section-header">🧹 Bước 1 / Step 1 — Làm sạch & Tiền xử lý / Data Cleaning & Preprocessing</div>',
+                unsafe_allow_html=True)
+
+    prep_key   = f"prep_df_{sheet_name}"
+    prep_log   = f"prep_log_{sheet_name}"
+
+    # Initialise cleaned copy in session state
+    if prep_key not in st.session_state:
+        st.session_state[prep_key] = df_active.to_json(orient="split")
+    if prep_log not in st.session_state:
+        st.session_state[prep_log] = []
+
+    current_df_json = st.session_state[prep_key]
+
+    # ── Problem detection ─────────────────────────────────────────────────────
+    with st.spinner("Đang phát hiện vấn đề dữ liệu..."):
+        problems = detect_data_problems(current_df_json)
+
+    sev_icon = {"err": "🔴", "warn": "🟡", "info": "🔵", "ok": "✅"}
+    chip_cls  = {"err": "chip-err", "warn": "chip-warn", "info": "chip-info", "ok": "chip-ok"}
+
+    st.markdown("**🔍 Vấn đề phát hiện tự động / Auto-detected Problems:**")
+    for p in problems:
+        icon  = sev_icon.get(p["severity"], "ℹ️")
+        chip  = f'<span class="{chip_cls.get(p["severity"], "chip-info")}">{p["type"].upper()}</span>'
+        fix   = f'<span style="color:#8b949e;font-size:0.78rem"> → {p["fix"]}</span>' if p["fix"] else ""
+        st.markdown(
+            f'<div class="problem-row">{icon} {chip} <span>{p["msg"]}</span>{fix}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    # ── Action buttons ────────────────────────────────────────────────────────
+    st.markdown("**🔧 Áp dụng sửa lỗi / Apply Fixes:**")
+    fix_cols = st.columns(3)
+
+    with fix_cols[0]:
+        if st.button("🩹 Fix Missing Values\n(Mean / Mode)", key=f"fix_miss_{sheet_name}",
+                     help="Numeric columns → filled with mean; text columns → filled with mode"):
+            new_json, msg = apply_fix_missing(current_df_json)
+            st.session_state[prep_key] = new_json
+            st.session_state[prep_log].append(("🩹 Missing Values", msg))
+            detect_data_problems.clear()
+            st.rerun()
+
+    with fix_cols[1]:
+        if st.button("🗑️ Remove Duplicates", key=f"fix_dup_{sheet_name}",
+                     help="Drops rows that are identical across all columns"):
+            new_json, msg = apply_remove_duplicates(current_df_json)
+            st.session_state[prep_key] = new_json
+            st.session_state[prep_log].append(("🗑️ Duplicates", msg))
+            detect_data_problems.clear()
+            st.rerun()
+
+    with fix_cols[2]:
+        if st.button("📐 Cap Outliers\n(3×IQR Winsorize)", key=f"fix_out_{sheet_name}",
+                     help="Clips extreme values to 3×IQR boundary — preserves all rows"):
+            new_json, msg = apply_winsorize(current_df_json)
+            st.session_state[prep_key] = new_json
+            st.session_state[prep_log].append(("📐 Outliers", msg))
+            detect_data_problems.clear()
+            st.rerun()
+
+    # ── Change log ────────────────────────────────────────────────────────────
+    log = st.session_state[prep_log]
+    if log:
+        st.markdown("**📋 Nhật ký thay đổi / Change Log:**")
+        for step_name, step_msg in log:
+            st.markdown(
+                f'<div style="background:#1a3a2a;border-left:3px solid #3fb950;'
+                f'padding:6px 12px;border-radius:4px;margin-bottom:4px;color:#e6edf3;font-size:0.85rem">'
+                f'<b style="color:#3fb950">{step_name}:</b> {step_msg}</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Before / After comparison ─────────────────────────────────────────────
+    current_df = pd.read_json(current_df_json, orient="split")
+    if log:
+        st.markdown("**📊 Trước / Sau — Before / After Comparison:**")
+        bcol, acol = st.columns(2)
+        with bcol:
+            st.markdown('<b style="color:#f85149">Before (original)</b>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#1f1414;border:1px solid #f85149;border-radius:8px;'
+                f'padding:8px 14px;color:#e6edf3;font-size:0.85rem">'
+                f'📏 {df_active.shape[0]:,} rows × {df_active.shape[1]} cols<br>'
+                f'❓ {df_active.isnull().sum().sum():,} missing values<br>'
+                f'📋 {df_active.duplicated().sum():,} duplicate rows</div>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(df_active.head(5), use_container_width=True, height=180)
+        with acol:
+            st.markdown('<b style="color:#3fb950">After (cleaned)</b>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="background:#0d1f17;border:1px solid #3fb950;border-radius:8px;'
+                f'padding:8px 14px;color:#e6edf3;font-size:0.85rem">'
+                f'📏 {current_df.shape[0]:,} rows × {current_df.shape[1]} cols<br>'
+                f'❓ {current_df.isnull().sum().sum():,} missing values<br>'
+                f'📋 {current_df.duplicated().sum():,} duplicate rows</div>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(current_df.head(5), use_container_width=True, height=180)
+
+        if st.button("↩️ Reset to Original", key=f"reset_prep_{sheet_name}"):
+            del st.session_state[prep_key]
+            del st.session_state[prep_log]
+            detect_data_problems.clear()
+            st.rerun()
+    else:
+        st.info("👆 No fixes applied yet. The original data will be used. Click a Fix button above to clean your data.")
+
+    return current_df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ML runners
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -652,7 +925,8 @@ def run_classification(method, df, target, features, test_size, balance, show_ui
 
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=test_size, random_state=42)
 
-    from sklearn.metrics import precision_score, recall_score, f1_score, roc_auc_score
+    from sklearn.metrics import (precision_score, recall_score, f1_score,
+                                  roc_auc_score, roc_curve)
     models = {
         "Logistic Regression": LogisticRegression(max_iter=1000),
         "Linear Discriminant Analysis (LDA)": LinearDiscriminantAnalysis(),
@@ -695,49 +969,100 @@ def run_classification(method, df, target, features, test_size, balance, show_ui
     if not show_ui:
         return metrics
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Accuracy", f"{acc:.2%}")
-        st.metric("F1-Score", f"{f1:.4f}")
-        st.metric("AUC", f"{auc:.4f}" if auc is not None else "N/A")
-        st.text(classification_report(y_te, y_pred))
-    with col2:
-        fig, ax = plt.subplots(figsize=(5, 4))
-        fig.patch.set_facecolor('#0d1117')
-        ax.set_facecolor('#161b22')
-        cm = confusion_matrix(y_te, y_pred)
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                    linewidths=0.5, linecolor='#30363d',
-                    annot_kws={"color": "#ffffff"})
-        ax.set_title("Confusion Matrix", color='#e6edf3')
-        ax.tick_params(colors='#8b949e')
-        fig_to_st(fig)
+    # ── Metrics row ───────────────────────────────────────────────────────────
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Accuracy",  f"{acc:.2%}")
+    m2.metric("F1-Score",  f"{f1:.4f}")
+    m3.metric("AUC",       f"{auc:.4f}" if auc is not None else "N/A")
+    m4.metric("Precision", f"{prec:.4f}")
+    st.text(classification_report(y_te, y_pred))
 
-    # Feature importance (where available)
+    # ── Plot 1: Confusion Matrix ───────────────────────────────────────────────
+    st.markdown("##### 📊 Confusion Matrix")
+    fig, ax = plt.subplots(figsize=(5, 4))
+    fig.patch.set_facecolor('#0d1117')
+    ax.set_facecolor('#161b22')
+    cm = confusion_matrix(y_te, y_pred)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
+                linewidths=0.5, linecolor='#30363d',
+                annot_kws={"color": "#ffffff", "size": 12})
+    ax.set_title("Confusion Matrix", color='#e6edf3')
+    ax.set_xlabel("Predicted", color='#c9d1d9')
+    ax.set_ylabel("Actual", color='#c9d1d9')
+    ax.tick_params(colors='#c9d1d9')
+    fig_to_st(fig)
+    st.caption(
+        "📖 How to read this: Dark blue = many predictions in that cell. "
+        "A GOOD model has large numbers on the diagonal (top-left to bottom-right = correct predictions) "
+        "and small numbers off-diagonal (= mistakes). "
+        "A BAD model has large off-diagonal numbers meaning it confuses classes often."
+    )
+
+    # ── Plot 2a: ROC Curve (binary) OR Feature Importance (multi-class) ───────
+    if is_binary and hasattr(mdl, "predict_proba"):
+        st.markdown("##### 📈 ROC Curve")
+        try:
+            fpr, tpr, _ = roc_curve(y_te, mdl.predict_proba(X_te)[:, 1])
+            fig3, ax3 = plt.subplots(figsize=(5, 4))
+            fig3.patch.set_facecolor('#0d1117')
+            ax3.set_facecolor('#161b22')
+            ax3.plot(fpr, tpr, color='#58a6ff', lw=2, label=f"AUC = {auc:.4f}" if auc else "ROC")
+            ax3.plot([0, 1], [0, 1], 'r--', lw=1, label="Random baseline")
+            ax3.set_xlabel("False Positive Rate", color='#c9d1d9')
+            ax3.set_ylabel("True Positive Rate", color='#c9d1d9')
+            ax3.set_title("ROC Curve", color='#e6edf3')
+            ax3.tick_params(colors='#c9d1d9')
+            ax3.legend(facecolor='#161b22', labelcolor='#c9d1d9')
+            fig_to_st(fig3)
+            st.caption(
+                "📖 How to read this: The curve shows the trade-off between catching true positives and avoiding false positives. "
+                "A GOOD model has a curve that bows strongly toward the top-left corner — AUC close to 1.0. "
+                "The red dashed line is a random-guess baseline (AUC = 0.5). "
+                "A BAD model sits close to the dashed line."
+            )
+        except Exception:
+            pass
+
+    # ── Plot 2b: Feature Importance / Coefficients ────────────────────────────
     if hasattr(mdl, "feature_importances_"):
+        st.markdown("##### 🏅 Feature Importances")
         fi = pd.Series(mdl.feature_importances_, index=features).sort_values(ascending=False)
-        fig2, ax2 = plt.subplots(figsize=(6, 3))
+        fig2, ax2 = plt.subplots(figsize=(7, max(3, len(features[:15]) * 0.35)))
         fig2.patch.set_facecolor('#0d1117')
         ax2.set_facecolor('#161b22')
-        fi.head(15).plot(kind='bar', ax=ax2, color='#58a6ff')
-        ax2.set_title("Feature Importances", color='#e6edf3')
-        ax2.tick_params(colors='#8b949e', labelcolor='#c9d1d9')
+        fi.head(15).plot(kind='barh', ax=ax2, color='#58a6ff')
+        ax2.set_title("Feature Importances (top 15)", color='#e6edf3')
+        ax2.tick_params(colors='#c9d1d9', labelcolor='#c9d1d9')
+        ax2.invert_yaxis()
         plt.tight_layout()
         fig_to_st(fig2)
+        st.caption(
+            "📖 How to read this: Longer bars = more important features for prediction. "
+            "Focus your attention (and domain expertise) on the top-ranked features. "
+            "Very short bars may be safe to drop from the model to simplify it."
+        )
     elif hasattr(mdl, "coef_"):
+        st.markdown("##### 🏅 Coefficient Magnitudes")
         coef = pd.Series(np.abs(mdl.coef_[0]) if mdl.coef_.ndim > 1 else np.abs(mdl.coef_),
                          index=features).sort_values(ascending=False)
-        fig2, ax2 = plt.subplots(figsize=(6, 3))
+        fig2, ax2 = plt.subplots(figsize=(7, max(3, len(features[:15]) * 0.35)))
         fig2.patch.set_facecolor('#0d1117')
         ax2.set_facecolor('#161b22')
-        coef.head(15).plot(kind='bar', ax=ax2, color='#bc8cff')
-        ax2.set_title("Coefficient Magnitudes", color='#e6edf3')
-        ax2.tick_params(colors='#8b949e', labelcolor='#c9d1d9')
+        coef.head(15).plot(kind='barh', ax=ax2, color='#bc8cff')
+        ax2.set_title("Coefficient Magnitudes (top 15)", color='#e6edf3')
+        ax2.tick_params(colors='#c9d1d9', labelcolor='#c9d1d9')
+        ax2.invert_yaxis()
         plt.tight_layout()
         fig_to_st(fig2)
+        st.caption(
+            "📖 How to read this: Longer bars = stronger influence on the predicted class. "
+            "Note this shows absolute magnitude — a feature can push the prediction in either direction. "
+            "Positive coefficients push toward class 1; negative push toward class 0."
+        )
 
     if method == "Classification Trees":
-        st.code(export_text(mdl, feature_names=features, max_depth=4), language="")
+        with st.expander("🌿 Decision Tree Rules (text)", expanded=False):
+            st.code(export_text(mdl, feature_names=features, max_depth=4), language="")
 
     return metrics
 
@@ -760,23 +1085,59 @@ def run_regression(method, df, target, features, test_size):
     y_pred = mdl.predict(X_te)
     mse = mean_squared_error(y_te, y_pred)
     r2 = r2_score(y_te, y_pred)
+    residuals = y_te - y_pred
 
     col1, col2 = st.columns(2)
     with col1:
         st.metric("R² Score", f"{r2:.4f}")
         st.metric("RMSE", f"{np.sqrt(mse):.4f}")
     with col2:
-        fig, ax = plt.subplots(figsize=(5, 4))
-        fig.patch.set_facecolor('#0d1117')
-        ax.set_facecolor('#161b22')
-        ax.scatter(y_te, y_pred, alpha=0.6, color='#58a6ff', edgecolors='none')
-        mn, mx = min(y_te.min(), y_pred.min()), max(y_te.max(), y_pred.max())
-        ax.plot([mn, mx], [mn, mx], 'r--', lw=1.5)
-        ax.set_xlabel("Actual", color='#c9d1d9')
-        ax.set_ylabel("Predicted", color='#c9d1d9')
-        ax.set_title("Actual vs Predicted", color='#e6edf3')
-        ax.tick_params(colors='#c9d1d9')
-        fig_to_st(fig)
+        if r2 >= 0.7:
+            st.success(f"R² = {r2:.4f} — Good fit! The model explains {r2:.1%} of variance.")
+        elif r2 >= 0.4:
+            st.warning(f"R² = {r2:.4f} — Moderate fit. Consider adding more features.")
+        else:
+            st.error(f"R² = {r2:.4f} — Weak fit. The model struggles to explain the target.")
+
+    # ── Plot 1: Actual vs Predicted ───────────────────────────────────────────
+    st.markdown("##### 📊 Actual vs Predicted")
+    fig, ax = plt.subplots(figsize=(5, 4))
+    fig.patch.set_facecolor('#0d1117')
+    ax.set_facecolor('#161b22')
+    ax.scatter(y_te, y_pred, alpha=0.5, color='#58a6ff', edgecolors='none', s=20)
+    mn, mx = min(y_te.min(), y_pred.min()), max(y_te.max(), y_pred.max())
+    ax.plot([mn, mx], [mn, mx], 'r--', lw=1.5, label="Perfect prediction")
+    ax.set_xlabel("Actual", color='#c9d1d9')
+    ax.set_ylabel("Predicted", color='#c9d1d9')
+    ax.set_title("Actual vs Predicted", color='#e6edf3')
+    ax.tick_params(colors='#c9d1d9')
+    ax.legend(facecolor='#161b22', labelcolor='#c9d1d9', fontsize=8)
+    fig_to_st(fig)
+    st.caption(
+        "📖 How to read this: Each dot is one test sample. "
+        "A GOOD model has dots clustering tightly along the red dashed line (predicted ≈ actual). "
+        "A BAD model has dots scattered widely above or below the line — "
+        "dots above mean the model under-predicts; dots below mean it over-predicts."
+    )
+
+    # ── Plot 2: Residual Plot ─────────────────────────────────────────────────
+    st.markdown("##### 📉 Residual Plot")
+    fig2, ax2 = plt.subplots(figsize=(5, 4))
+    fig2.patch.set_facecolor('#0d1117')
+    ax2.set_facecolor('#161b22')
+    ax2.scatter(y_pred, residuals, alpha=0.5, color='#bc8cff', edgecolors='none', s=20)
+    ax2.axhline(0, color='#f85149', linestyle='--', lw=1.5)
+    ax2.set_xlabel("Predicted Value", color='#c9d1d9')
+    ax2.set_ylabel("Residual (Actual − Predicted)", color='#c9d1d9')
+    ax2.set_title("Residual Plot", color='#e6edf3')
+    ax2.tick_params(colors='#c9d1d9')
+    fig_to_st(fig2)
+    st.caption(
+        "📖 How to read this: Residuals are prediction errors (actual − predicted). "
+        "A GOOD model has dots randomly scattered above and below the red zero line — no clear pattern. "
+        "A BAD model shows a funnel shape (heteroscedasticity), a curve, or a systematic band "
+        "which means the model is missing something important."
+    )
 
     if method == "Linear Regression":
         coef = pd.Series(mdl.coef_, index=features).sort_values(key=abs, ascending=False)
@@ -831,65 +1192,118 @@ def run_association(df, min_support, min_confidence, min_lift):
 
 def run_clustering(method, df, features, n_clusters):
     st.markdown('<div class="section-header">⚙️ Clustering</div>', unsafe_allow_html=True)
+    from sklearn.decomposition import PCA
     df_enc = encode_df(df[features].dropna())
     X = StandardScaler().fit_transform(df_enc.values)
 
     if method == "K-Means Clustering":
+        # ── Plot 1: Elbow Curve ────────────────────────────────────────────────
+        st.markdown("##### 📊 Elbow Curve (choose best K)")
         mdl = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         labels = mdl.fit_predict(X)
         inertia_vals = []
-        for k in range(2, min(11, len(X))):
+        k_range = range(2, min(11, len(X)))
+        for k in k_range:
             km = KMeans(n_clusters=k, random_state=42, n_init=10)
             km.fit(X)
             inertia_vals.append(km.inertia_)
         fig, ax = plt.subplots(figsize=(6, 3))
         fig.patch.set_facecolor('#0d1117')
         ax.set_facecolor('#161b22')
-        ax.plot(range(2, min(11, len(X))), inertia_vals, 'o-', color='#58a6ff')
+        ax.plot(list(k_range), inertia_vals, 'o-', color='#58a6ff', lw=2)
+        ax.axvline(n_clusters, color='#f778ba', linestyle='--', lw=1.5, label=f"Current K={n_clusters}")
         ax.set_title("Elbow Curve", color='#e6edf3')
-        ax.set_xlabel("K", color='#8b949e')
-        ax.set_ylabel("Inertia", color='#8b949e')
-        ax.tick_params(colors='#8b949e')
+        ax.set_xlabel("Number of Clusters (K)", color='#c9d1d9')
+        ax.set_ylabel("Inertia (WCSS)", color='#c9d1d9')
+        ax.tick_params(colors='#c9d1d9')
+        ax.legend(facecolor='#161b22', labelcolor='#c9d1d9')
         fig_to_st(fig)
+        st.caption(
+            "📖 How to read this: The y-axis shows total within-cluster variance (lower = tighter clusters). "
+            "Look for the 'elbow' — the point where the curve bends and stops dropping steeply. "
+            "That K value is usually the optimal number of clusters. "
+            "The pink dashed line shows your currently selected K."
+        )
     else:
         mdl = AgglomerativeClustering(n_clusters=n_clusters)
         labels = mdl.fit_predict(X)
+        # ── Plot 1: Dendrogram ─────────────────────────────────────────────────
+        st.markdown("##### 🌳 Dendrogram")
         linked = linkage(X[:min(200, len(X))], method='ward')
         fig, ax = plt.subplots(figsize=(8, 4))
         fig.patch.set_facecolor('#0d1117')
         ax.set_facecolor('#161b22')
         dendrogram(linked, ax=ax, color_threshold=0,
-                   above_threshold_color='#58a6ff',
-                   leaf_font_size=6)
-        ax.set_title("Dendrogram", color='#e6edf3')
+                   above_threshold_color='#58a6ff', leaf_font_size=6)
+        ax.set_title("Dendrogram (sample of 200 rows)", color='#e6edf3')
         ax.tick_params(colors='#8b949e')
         plt.tight_layout()
         fig_to_st(fig)
+        st.caption(
+            "📖 How to read this: Each leaf at the bottom is a data point. "
+            "Branches merge from the bottom up — points that are most similar merge first (lowest lines). "
+            "The height of a merge represents how different the two groups were. "
+            "To choose K clusters, draw a horizontal line across the diagram — the number of vertical lines it crosses = K."
+        )
 
-    df_out = df[features].copy()
-    df_out["Cluster"] = labels
-    st.dataframe(df_out.head(30), use_container_width=True)
-
+    # ── Silhouette Score ──────────────────────────────────────────────────────
     try:
         sil = silhouette_score(X, labels)
-        st.metric("Silhouette Score", f"{sil:.4f}")
+        sil_col, _ = st.columns([1, 2])
+        with sil_col:
+            st.metric("Silhouette Score", f"{sil:.4f}",
+                      help="Range: -1 to +1. Above 0.5 = good separation. Above 0.7 = strong clusters.")
+        if sil > 0.7:
+            st.success(f"Silhouette = {sil:.4f} — Excellent cluster separation!")
+        elif sil > 0.5:
+            st.info(f"Silhouette = {sil:.4f} — Good cluster separation.")
+        elif sil > 0.25:
+            st.warning(f"Silhouette = {sil:.4f} — Moderate separation. Try a different K.")
+        else:
+            st.error(f"Silhouette = {sil:.4f} — Weak separation. Clusters may overlap significantly.")
     except Exception:
         pass
 
-    # 2-D scatter (first 2 features)
-    if len(features) >= 2:
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
+    # ── Plot 2: PCA 2D Scatter ────────────────────────────────────────────────
+    st.markdown("##### 🎨 2D PCA Cluster Scatter")
+    st.caption(
+        f"Note: {len(features)} features compressed into 2 dimensions using PCA for visualization. "
+        "Some information is lost — this is an approximation."
+    )
+    if X.shape[1] >= 2:
+        n_comp = min(2, X.shape[1])
+        pca = PCA(n_components=n_comp, random_state=42)
+        X_2d = pca.fit_transform(X)
+        var_explained = pca.explained_variance_ratio_.sum() * 100
+
+        fig2, ax2 = plt.subplots(figsize=(7, 5))
         fig2.patch.set_facecolor('#0d1117')
         ax2.set_facecolor('#161b22')
         palette = plt.cm.tab10.colors
         for c in np.unique(labels):
             mask = labels == c
-            ax2.scatter(X[mask, 0], X[mask, 1],
-                        color=palette[c % 10], label=f"Cluster {c}", alpha=0.7, s=30)
-        ax2.legend(fontsize=7, labelcolor='#8b949e', facecolor='#161b22')
-        ax2.set_title("Cluster Scatter (first 2 dims)", color='#e6edf3')
-        ax2.tick_params(colors='#8b949e')
+            ax2.scatter(X_2d[mask, 0], X_2d[mask, 1] if n_comp > 1 else np.zeros(mask.sum()),
+                        color=palette[c % 10], label=f"Cluster {c}",
+                        alpha=0.7, s=25, edgecolors='none')
+        ax2.legend(facecolor='#161b22', labelcolor='#c9d1d9', fontsize=8)
+        ax2.set_title(f"Clusters in 2D PCA Space ({var_explained:.1f}% variance explained)",
+                      color='#e6edf3')
+        ax2.set_xlabel("PCA Component 1", color='#c9d1d9')
+        ax2.set_ylabel("PCA Component 2", color='#c9d1d9')
+        ax2.tick_params(colors='#c9d1d9')
+        plt.tight_layout()
         fig_to_st(fig2)
+        st.caption(
+            "📖 How to read this: Each dot is one data row, coloured by its assigned cluster. "
+            "A GOOD clustering result shows clearly separated blobs of colour with little overlap. "
+            "A BAD result has colours mixed together — the clusters are not well-defined. "
+            f"(This 2D view captures {var_explained:.1f}% of the total variance in your {len(features)}-feature data.)"
+        )
+
+    df_out = df[features].copy()
+    df_out["Cluster"] = labels
+    with st.expander("📋 Cluster Assignments (first 50 rows)", expanded=False):
+        st.dataframe(df_out.head(50), use_container_width=True)
 
 
 def run_balancing(method, df, target, features):
@@ -934,6 +1348,7 @@ for k, v in {
     "step": 1,
     "gemini_key": "",
     "openrouter_key": "",
+    "ai_vn": "",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1050,26 +1465,32 @@ if not st.session_state["sheets"]:
     """, unsafe_allow_html=True)
     st.stop()
 
-df_active = st.session_state["sheets"][st.session_state["active_sheet"]]
+df_active_raw = st.session_state["sheets"][st.session_state["active_sheet"]]
+active_sheet_name = st.session_state["active_sheet"]
 
-# ── Step 1 – Data Preview ─────────────────────────────────────────────────────
-with st.expander("🔍 Xem truoc Du lieu / Data Preview & Profile", expanded=False):
+# ── Data Preview ──────────────────────────────────────────────────────────────
+with st.expander("🔍 Xem trước Dữ liệu / Data Preview & Profile", expanded=False):
     tab1, tab2, tab3 = st.tabs(["Table", "Statistics", "Column Types"])
     with tab1:
-        st.dataframe(df_active.head(50), use_container_width=True)
+        st.dataframe(df_active_raw.head(50), use_container_width=True)
     with tab2:
-        st.dataframe(df_active.describe(include="all"), use_container_width=True)
+        st.dataframe(df_active_raw.describe(include="all"), use_container_width=True)
     with tab3:
-        dtypes = df_active.dtypes.reset_index()
+        dtypes = df_active_raw.dtypes.reset_index()
         dtypes.columns = ["Column", "Type"]
-        dtypes["Nulls"] = df_active.isnull().sum().values
-        dtypes["Unique"] = df_active.nunique().values
+        dtypes["Nulls"] = df_active_raw.isnull().sum().values
+        dtypes["Unique"] = df_active_raw.nunique().values
         st.dataframe(dtypes, use_container_width=True)
 
 st.divider()
 
+# ── Step 1 – Data Cleaning & Preprocessing ────────────────────────────────────
+df_active = show_preprocessing_section(df_active_raw, active_sheet_name)
+
+st.divider()
+
 # ── Step 2 – AI Goal Understanding ───────────────────────────────────────────
-st.markdown('<div class="section-header">🤖 Bước 1 / Step 1 — Mô tả Mục tiêu / Describe Your Goal</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🤖 Bước 2 / Step 2 — Mô tả Mục tiêu / Describe Your Goal</div>', unsafe_allow_html=True)
 
 user_goal = st.text_area(
     "Bạn muốn đạt được điều gì? / What do you want to achieve? (in any language)",
@@ -1196,7 +1617,7 @@ Text to translate:
 st.divider()
 
 # ── Step 3 – Method Selection ─────────────────────────────────────────────────
-st.markdown('<div class="section-header">🛠️ Bước 2 / Step 2 — Chọn Phương pháp / Choose a Method</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-header">🛠️ Bước 3 / Step 3 — Chọn Phương pháp / Choose a Method</div>', unsafe_allow_html=True)
 
 for group_id, gmeta in GROUP_META.items():
     st.markdown(f"**{gmeta['icon']} {gmeta['label']}**")
@@ -1214,7 +1635,7 @@ for group_id, gmeta in GROUP_META.items():
                 f'<span class="badge {meta["badge"]}">{group_id.upper()}</span><br>'
                 f'<b style="color:#e6edf3">{name}</b><br>'
                 f'<small style="color:#8b949e">{meta["vn"]}</small><br>'
-                f'<small style="color:#6e7681;font-size:0.75rem">{meta["desc"][:90]}…</small>'
+                f'<small style="color:#c9d1d9;font-size:0.8rem;line-height:1.5;display:block;margin-top:4px">{meta["desc"]}</small>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -1256,7 +1677,7 @@ if not method:
     st.info("👆 Hãy chọn một phương pháp ở trên để cấu hình và chạy / Select a method above.")
     st.stop()
 
-st.markdown(f'<div class="section-header">⚡ Step 3 — Configure & Run: {method}</div>',
+st.markdown(f'<div class="section-header">⚡ Bước 4 / Step 4 — Cấu hình & Chạy / Configure & Run: {method}</div>',
             unsafe_allow_html=True)
 
 meta = METHODS[method]
@@ -1356,10 +1777,13 @@ if st.button(f"🚀 Run {method}", type="primary"):
 
     # ── Store comparison metrics if method is in selected_methods ────────────
     if result_metrics and method in st.session_state["selected_methods"]:
-        existing = [r for r in st.session_state["comparison_results"] if r["Method"] != method]
+        result_metrics["Sheet"] = active_sheet_name
+        # Use method + sheet as composite key so same method on different sheets both appear
+        existing = [r for r in st.session_state["comparison_results"]
+                    if not (r["Method"] == method and r.get("Sheet") == active_sheet_name)]
         existing.append(result_metrics)
         st.session_state["comparison_results"] = existing
-        st.success(f"✅ Đã thêm kết quả {method} vào bảng so sánh / Added to comparison table.")
+        st.success(f"✅ Added {method} ({active_sheet_name}) to comparison table.")
 
     # ── AI interpretation ─────────────────────────────────────────────────────
     st.divider()
@@ -1426,9 +1850,27 @@ if st.session_state.get("comparison_results"):
     st.markdown('<div class="section-header">📊 Bảng So sánh Phương pháp / Method Comparison Table</div>',
                 unsafe_allow_html=True)
     cmp_df = pd.DataFrame(st.session_state["comparison_results"])
-    st.dataframe(cmp_df.set_index("Method"), use_container_width=True)
+    # Reorder columns — Sheet first for cross-sheet clarity
+    col_order = ["Sheet", "Method", "Accuracy", "Precision", "Recall", "F1-Score", "AUC", "Train rows", "Test rows"]
+    col_order = [c for c in col_order if c in cmp_df.columns]
+    cmp_df = cmp_df[col_order]
+
+    # Label rows as "Sheet — Method" for the index
+    if "Sheet" in cmp_df.columns and "Method" in cmp_df.columns:
+        cmp_df.index = cmp_df["Sheet"].str[:20] + " › " + cmp_df["Method"]
+        display_df = cmp_df.drop(columns=["Sheet", "Method"])
+    else:
+        display_df = cmp_df.set_index("Method") if "Method" in cmp_df.columns else cmp_df
+
+    st.dataframe(display_df, use_container_width=True)
+    st.caption(
+        "📖 Each row is one model run. The Sheet column shows which dataset was used — "
+        "allowing you to compare the same algorithm across different sheets/datasets. "
+        "F1-Score is usually the best single metric for imbalanced classification problems."
+    )
     try:
         best_row = cmp_df.loc[cmp_df["F1-Score"].astype(float).idxmax()]
-        st.success(f"🏆 Phương pháp tốt nhất theo F1-Score / Best by F1: {best_row['Method']} (F1 = {best_row['F1-Score']})")
+        label = f"{best_row.get('Sheet', '')} › {best_row.get('Method', best_row.name)}"
+        st.success(f"🏆 Best by F1-Score: **{label}** (F1 = {best_row['F1-Score']})")
     except Exception:
         pass
