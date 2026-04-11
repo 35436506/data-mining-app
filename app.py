@@ -234,12 +234,29 @@ def load_file(uploaded) -> dict[str, pd.DataFrame]:
         st.error("Unsupported file type.")
     return sheets
 
-def df_summary(df: pd.DataFrame) -> str:
-    return (f"Shape: {df.shape}\nColumns: {list(df.columns)}\n"
-            f"Dtypes:\n{df.dtypes.to_string()}\n"
-            f"Null counts:\n{df.isnull().sum().to_string()}\n"
-            f"Sample (3 rows):\n{df.head(3).to_string()}\n"
-            f"Describe:\n{df.describe(include='all').to_string()}")
+def df_summary(df: pd.DataFrame, name: str = "") -> str:
+    """Rich summary including value distributions, dtypes, nulls, sample rows."""
+    buf = io.StringIO()
+    null_info = df.isnull().sum()
+    null_pct  = (null_info / len(df) * 100).round(1)
+    dtype_info = pd.DataFrame({
+        "dtype":    df.dtypes.astype(str),
+        "nulls":    null_info,
+        "null_%":   null_pct,
+        "unique":   df.nunique(),
+        "sample":   [str(df[c].dropna().iloc[0]) if df[c].dropna().shape[0] > 0 else "N/A"
+                     for c in df.columns],
+    })
+    # Numeric stats for numeric cols
+    num_desc = df.describe(include=[np.number]).T[["min","max","mean","std"]].round(3) if len(df.select_dtypes(include=[np.number]).columns) > 0 else pd.DataFrame()
+    return (
+        f"Name: {name}\n"
+        f"Shape: {df.shape[0]:,} rows × {df.shape[1]} columns\n"
+        f"Duplicates: {df.duplicated().sum()}\n\n"
+        f"Column overview:\n{dtype_info.to_string()}\n\n"
+        + (f"Numeric statistics:\n{num_desc.to_string()}\n\n" if not num_desc.empty else "")
+        + f"First 3 rows:\n{df.head(3).to_string()}\n"
+    )
 
 def encode_df(df: pd.DataFrame):
     df = df.copy(); le = LabelEncoder()
@@ -827,19 +844,51 @@ else:
 # ──────────────────────────────────────────────────────────────────────────────
 # STEP 1 — DATA PREVIEW
 # ──────────────────────────────────────────────────────────────────────────────
-st.markdown('<div class="section-hdr">📂 Step 1 — Data Overview</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-hdr">📂 Step 1 — Data Overview (All Uploaded Files)</div>',
+            unsafe_allow_html=True)
 
-with st.expander(f"🔍 Preview: {active_name}  ({df_active.shape[0]:,} rows × {df_active.shape[1]} cols)",
-                 expanded=True):
-    tab_t, tab_s, tab_c = st.tabs(["Table","Statistics","Column Types"])
-    with tab_t: st.dataframe(df_active.head(50), use_container_width=True)
-    with tab_s: st.dataframe(df_active.describe(include="all"), use_container_width=True)
-    with tab_c:
-        dt = df_active.dtypes.reset_index(); dt.columns = ["Column","Type"]
-        dt["Nulls"] = df_active.isnull().sum().values
-        dt["Unique"] = df_active.nunique().values
-        dt["Sample"] = [str(df_active[c].dropna().iloc[0]) if df_active[c].dropna().shape[0]>0 else "" for c in df_active.columns]
-        st.dataframe(dt, use_container_width=True)
+all_sheets_loaded = st.session_state.get("sheets", {})
+
+# Summary banner across all files
+total_rows = sum(d.shape[0] for d in all_sheets_loaded.values())
+total_cols_avg = int(np.mean([d.shape[1] for d in all_sheets_loaded.values()])) if all_sheets_loaded else 0
+st.markdown(
+    f'<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;'
+    f'padding:10px 16px;color:#c9d1d9;font-size:0.85rem;margin-bottom:0.8rem">'
+    f'📁 <b style="color:#58a6ff">{len(all_sheets_loaded)} file(s) loaded</b> · '
+    f'{total_rows:,} total rows · '
+    + " &nbsp;|&nbsp; ".join(
+        f'<b style="color:#e6edf3">{n}</b>: {d.shape[0]:,}×{d.shape[1]}'
+        for n, d in all_sheets_loaded.items()
+    )
+    + '</div>',
+    unsafe_allow_html=True,
+)
+
+# Tab per file — so user can inspect all files before hitting AI
+file_tabs = st.tabs([f"📄 {n}" for n in all_sheets_loaded.keys()])
+for tab, (sheet_name, sheet_df) in zip(file_tabs, all_sheets_loaded.items()):
+    # Use prep'd version if available
+    _s = st.session_state["prep_transforms"].get(sheet_name, [])
+    display_df = _json_to_df(_s[-1][1]) if _s else sheet_df
+    with tab:
+        st.caption(f"{display_df.shape[0]:,} rows × {display_df.shape[1]} cols"
+                   + (" · ✅ Cleaned" if _s else " · Original"))
+        sub1, sub2, sub3 = st.tabs(["Table","Statistics","Column Types"])
+        with sub1:
+            st.dataframe(display_df.head(50), use_container_width=True)
+        with sub2:
+            st.dataframe(display_df.describe(include="all"), use_container_width=True)
+        with sub3:
+            dt = display_df.dtypes.reset_index(); dt.columns = ["Column","Type"]
+            dt["Nulls"]  = display_df.isnull().sum().values
+            dt["Null %"] = (display_df.isnull().mean() * 100).round(1).values
+            dt["Unique"] = display_df.nunique().values
+            dt["Sample"] = [
+                str(display_df[c].dropna().iloc[0]) if display_df[c].dropna().shape[0] > 0 else ""
+                for c in display_df.columns
+            ]
+            st.dataframe(dt, use_container_width=True)
 
 if ws == 1:
     if st.button("▶ Continue to AI Blueprint →", type="primary"):
@@ -878,38 +927,60 @@ if ws >= 2:
                 st.session_state["ai_blueprint"] = ""; st.rerun()
 
     if analyse_clicked and user_goal.strip():
-        all_loaded = st.session_state.get("sheets",{})
-        summaries = "\n\n".join(
-            f"=== DATASET: {n} ===\n{df_summary(d)}" for n,d in list(all_loaded.items())[:4]
-        )
-        prompt = f"""You are an expert data scientist. The user has uploaded {len(all_loaded)} dataset(s).
+        all_loaded = st.session_state.get("sheets", {})
 
-{summaries}
+        # Build rich summaries for EVERY loaded file, preferring cleaned versions
+        summary_parts = []
+        for sheet_name, sheet_df in all_loaded.items():
+            prep_stack = st.session_state["prep_transforms"].get(sheet_name, [])
+            use_df = _json_to_df(prep_stack[-1][1]) if prep_stack else sheet_df
+            cleaned_note = " [CLEANED/PREPARED]" if prep_stack else ""
+            summary_parts.append(
+                f"{'='*60}\n"
+                f"FILE: {sheet_name}{cleaned_note}\n"
+                f"{'='*60}\n"
+                + df_summary(use_df, sheet_name)
+            )
+
+        # Also note any relationship between files (shared columns)
+        col_freq = Counter(c for d in all_loaded.values() for c in d.columns)
+        shared = [c for c, n in col_freq.items() if n > 1]
+        relationship_note = (
+            f"\nSHARED COLUMNS ACROSS FILES (potential merge keys): {', '.join(shared)}\n"
+            if shared else "\nNo columns are shared across files — files may need different join strategy.\n"
+        )
+
+        all_summaries = "\n\n".join(summary_parts) + relationship_note
+
+        prompt = f"""You are an expert data scientist. The user has uploaded {len(all_loaded)} file(s). You have full access to ALL of them below. Analyse ALL files together, not just one.
+
+{all_summaries}
 
 USER GOAL: {user_goal}
 
-Provide a CONCISE, STRUCTURED blueprint covering exactly these sections:
+Based on ALL the files above, provide a CONCISE, DIRECT blueprint:
 
 1. DATASET UNDERSTANDING
-What each dataset contains. What the columns represent. Note any date/ID/text columns.
+What each file contains and what its columns mean. Identify the role of each file (fact table, lookup, time series, etc). Note date/ID/text columns explicitly.
 
-2. DATA QUALITY ISSUES
-List specific problems: missing values (which columns, what %), outliers (which columns), text columns needing encoding, duplicate rows, scale differences. Be specific with column names.
+2. DATA QUALITY ISSUES (be specific)
+For EACH file: list missing values with exact column names and percentages, outliers (min/max values that look wrong), text columns needing encoding, duplicate rows. Also note mismatched data types (e.g. dates stored as text).
 
-3. RECOMMENDED TRANSFORMATIONS (in order)
-Step-by-step: what to fix first, what encoding is needed, whether to merge files and on which key, any feature engineering that would help.
+3. RECOMMENDED TRANSFORMATIONS (step by step in order)
+What to fix first. Which files to merge, on which column key, and what type of join (inner/outer/left). Any feature engineering needed (e.g. calculate duration, extract date parts, create a binary target column). Be specific with column names.
 
 4. BEST TECHNIQUES FOR THIS GOAL
-Recommend 2-4 specific methods from: Logistic Regression, Random Forest, Linear Regression, Neural Networks (MLP), K-Means Clustering, Hierarchical Clustering, Association Rules (Apriori), LDA, KNN, Naive Bayes, SVM. Explain WHY each is suitable. If multiple methods, explain which to compare.
+Recommend 2-3 specific methods from this list only: Logistic Regression, Random Forest, Linear Regression, Neural Networks (MLP), K-Means Clustering, Hierarchical Clustering, Association Rules (Apriori), LDA, KNN, Naive Bayes, SVM. Explain WHY each fits this goal. State which 2 to compare first.
 
 5. TARGET & FEATURE COLUMNS
-For supervised methods: which column is the target/dependent variable and why. Which columns are features. Reference actual column names.
+State the exact target column name and why. List the exact feature column names to use. Reference actual column names from the files above.
 
 6. EXPECTED CHALLENGES
-Class imbalance? Too many features? Correlated columns? Small dataset? Warn the user.
+Be specific: class imbalance (give class counts if visible), high cardinality columns, date alignment complexity, small dataset risk, collinearity.
 
-FORMATTING: No markdown symbols (no **, no *, no #). Write in numbered paragraphs only. Be direct and specific. Maximum 500 words."""
-        with st.spinner("AI is reading your data and building a blueprint…"):
+FORMATTING RULES: No markdown (no **, no *, no #, no dashes as bullets). Write in numbered sections with plain prose paragraphs. Be direct, specific, and reference actual column names. Maximum 600 words."""
+
+        with st.spinner(f"AI is analysing all {len(all_loaded)} file(s) and building a blueprint…"):
             result = ask_ai(prompt)
         st.session_state["ai_blueprint"] = result
         st.session_state["wizard_step"] = 2
@@ -939,7 +1010,29 @@ if ws >= 3:
     st.markdown('<div class="section-hdr">🧹 Step 3 — Prepare Data (Transform & Engineer)</div>',
                 unsafe_allow_html=True)
 
-    prep_log_key = active_name
+    # ── File selector — let user switch which file they're preparing ───────────
+    all_loaded_3 = st.session_state.get("sheets", {})
+    if len(all_loaded_3) > 1:
+        st.markdown(
+            '<div style="background:#1f3a5f;border:1px solid #58a6ff;border-radius:8px;'
+            'padding:8px 14px;color:#c9d1d9;font-size:0.83rem;margin-bottom:0.8rem">'
+            '💡 <b style="color:#58a6ff">You have multiple files.</b> '
+            'Select which file to clean below. You can prepare each one separately before merging. '
+            'Use the <b>Merge Files</b> tool in the sidebar to combine them after cleaning.</div>',
+            unsafe_allow_html=True,
+        )
+        prep_target = st.selectbox(
+            "🗂️ Which file to prepare now?",
+            list(all_loaded_3.keys()),
+            index=list(all_loaded_3.keys()).index(active_name) if active_name in all_loaded_3 else 0,
+            key="prep_file_selector",
+        )
+    else:
+        prep_target = active_name
+
+    prep_raw_df   = all_loaded_3.get(prep_target, raw_df)
+    prep_log_key  = prep_target
+
     if prep_log_key not in st.session_state["prep_log"]:
         st.session_state["prep_log"][prep_log_key] = []
     if prep_log_key not in st.session_state["prep_transforms"]:
@@ -947,8 +1040,18 @@ if ws >= 3:
 
     stack = st.session_state["prep_transforms"][prep_log_key]
     log   = st.session_state["prep_log"][prep_log_key]
-    current_json = stack[-1][1] if stack else _df_to_json(raw_df)
+    current_json = stack[-1][1] if stack else _df_to_json(prep_raw_df)
     current_df   = _json_to_df(current_json)
+
+    st.markdown(
+        f'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;'
+        f'padding:6px 14px;color:#8b949e;font-size:0.82rem;margin-bottom:0.6rem">'
+        f'Preparing: <b style="color:#58a6ff">{prep_target}</b> — '
+        f'{current_df.shape[0]:,} rows × {current_df.shape[1]} cols'
+        + (' · <span style="color:#3fb950">✅ Cleaned</span>' if stack else ' · Original')
+        + '</div>',
+        unsafe_allow_html=True,
+    )
 
     # ── Auto-detected problems ────────────────────────────────────────────────
     st.markdown("**🔍 Auto-detected Data Problems:**")
@@ -1028,10 +1131,10 @@ if ws >= 3:
             st.markdown(
                 f'<div style="background:#1f1414;border:1px solid #f85149;border-radius:8px;'
                 f'padding:8px 12px;color:#e6edf3;font-size:0.82rem">'
-                f'📏 {raw_df.shape[0]:,} rows × {raw_df.shape[1]} cols<br>'
-                f'❓ {raw_df.isnull().sum().sum():,} missing &nbsp;|&nbsp; '
-                f'📋 {raw_df.duplicated().sum():,} duplicates</div>', unsafe_allow_html=True)
-            st.dataframe(raw_df.head(5), use_container_width=True, height=170)
+                f'📏 {prep_raw_df.shape[0]:,} rows × {prep_raw_df.shape[1]} cols<br>'
+                f'❓ {prep_raw_df.isnull().sum().sum():,} missing &nbsp;|&nbsp; '
+                f'📋 {prep_raw_df.duplicated().sum():,} duplicates</div>', unsafe_allow_html=True)
+            st.dataframe(prep_raw_df.head(5), use_container_width=True, height=170)
         with cb:
             st.markdown('<b style="color:#3fb950">After (cleaned)</b>', unsafe_allow_html=True)
             st.markdown(
@@ -1045,7 +1148,7 @@ if ws >= 3:
         # Download cleaned dataset
         cleaned_csv = current_df2.to_csv(index=False).encode()
         st.download_button("⬇️ Download Cleaned Dataset (CSV)", cleaned_csv,
-                           file_name=f"cleaned_{active_name.replace(' ','_')[:30]}.csv",
+                           file_name=f"cleaned_{prep_target.replace(' ','_')[:30]}.csv",
                            mime="text/csv")
 
         col_undo, col_reset = st.columns(2)
